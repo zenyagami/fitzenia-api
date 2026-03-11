@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(gcloud secrets:*)",
+      "Bash(./deploy-dev.sh)",
+      "Bash(gcloud projects:*)",
+      "Bash(SA=\"serviceAccount:225613129645-compute@developer.gserviceaccount.com\"\ngcloud secrets add-iam-policy-binding FATSECRET_CLIENT_ID --member=\"$SA\" --role=\"roles/secretmanager.secretAccessor\" --project=fitzenio\ngcloud secrets add-iam-policy-binding FATSECRET_CLIENT_SECRET --member=\"$SA\" --role=\"roles/secretmanager.secretAccessor\" --project=fitzenio\ngcloud secrets add-iam-policy-binding USDA_API_KEY --member=\"$SA\" --role=\"roles/secretmanager.secretAccessor\" --project=fitzenio\ngcloud secrets add-iam-policy-binding OPENAI_API_KEY --member=\"$SA\" --role=\"roles/secretmanager.secretAccessor\" --project=fitzenio)",
+      "Bash(gcloud iam:*)",
+      "Bash(./deploy.sh)",
+      "Bash(gcloud services:*)",
+      "Bash(gcloud auth:*)",
+      "Bash(gcloud container:*)",
+      "Bash(SA=\"serviceAccount:225613129645-compute@developer.gserviceaccount.com\"\ngcloud secrets add-iam-policy-binding FATSECRET_CLIENT_ID --member=\"$SA\" --role=\"roles/secretmanager.secretAccessor\" --project=fitzenio\ngcloud secrets add-iam-policy-binding FATSECRET_CLIENT_SECRET --member=\"$SA\" --role=\"roles/secretmanager.secretAccessor\" --project=fitzenio\ngcloud secrets add-iam-policy-binding USDA_API_KEY --member=\"$SA\" --role=\"roles/secretmanager.secretAccessor\" --project=fitzenio\ngcloud secrets add-iam-policy-binding OPENAI_API_KEY --member=\"$SA\" --role=\"roles/secretmanager.secretAccessor\" --project=fitzenio\necho \"Done!\")",
+      "Bash(gcloud run:*)",
+      "Bash(curl -s https://fitzenio-api-prod-vtz5mtnlsq-lz.a.run.app/health\ncurl -s https://fitzenio-api-dev-6iqstbhjfq-lz.a.run.app/health)"
+    ]
+  }
+}

@@ -1,5 +1,10 @@
 package com.zenthek.config
 
+import io.github.cdimascio.dotenv.dotenv
+
+private val dotenv = dotenv { ignoreIfMissing = true }
+private fun env(key: String): String? = dotenv[key]
+
 data class AppConfig(
     val environment: AppEnvironment,
     val apiKeys: ApiKeys,
@@ -31,7 +36,7 @@ enum class AppEnvironment {
 
 object ConfigLoader {
     fun loadConfig(): AppConfig {
-        val environment = AppEnvironment.fromString(System.getenv("APP_ENVIRONMENT"))
+        val environment = AppEnvironment.fromString(env("APP_ENVIRONMENT"))
 
         return when (environment) {
             AppEnvironment.DEVELOPMENT -> createDevelopmentConfig()
@@ -43,14 +48,10 @@ object ConfigLoader {
         return AppConfig(
             environment = AppEnvironment.DEVELOPMENT,
             apiKeys = ApiKeys(
-                fatSecretClientId = System.getenv("FATSECRET_CLIENT_ID")
-                    ?: "mock_fatsecret_client_id",
-                fatSecretClientSecret = System.getenv("FATSECRET_CLIENT_SECRET")
-                    ?: "mock_fatsecret_client_secret",
-                usdaApiKey = System.getenv("USDA_API_KEY")
-                    ?: "mock_usda_api_key",
-                openAiApiKey = System.getenv("OPENAI_API_KEY")
-                    ?: "mock_openai_api_key"
+                fatSecretClientId = env("FATSECRET_CLIENT_ID") ?: "mock_fatsecret_client_id",
+                fatSecretClientSecret = env("FATSECRET_CLIENT_SECRET") ?: "mock_fatsecret_client_secret",
+                usdaApiKey = env("USDA_API_KEY") ?: "mock_usda_api_key",
+                openAiApiKey = env("OPENAI_API_KEY") ?: "mock_openai_api_key"
             )
         )
     }
@@ -59,14 +60,10 @@ object ConfigLoader {
         return AppConfig(
             environment = AppEnvironment.PRODUCTION,
             apiKeys = ApiKeys(
-                fatSecretClientId = System.getenv("FATSECRET_CLIENT_ID")
-                    ?: "mock_fatsecret_client_id",
-                fatSecretClientSecret = System.getenv("FATSECRET_CLIENT_SECRET")
-                    ?: "mock_fatsecret_client_secret",
-                usdaApiKey = System.getenv("USDA_API_KEY")
-                    ?: "mock_usda_api_key",
-                openAiApiKey = System.getenv("OPENAI_API_KEY")
-                    ?: "mock_openai_api_key"
+                fatSecretClientId = env("FATSECRET_CLIENT_ID") ?: error("Missing FATSECRET_CLIENT_ID"),
+                fatSecretClientSecret = env("FATSECRET_CLIENT_SECRET") ?: error("Missing FATSECRET_CLIENT_SECRET"),
+                usdaApiKey = env("USDA_API_KEY") ?: error("Missing USDA_API_KEY"),
+                openAiApiKey = env("OPENAI_API_KEY") ?: error("Missing OPENAI_API_KEY")
             )
         )
     }

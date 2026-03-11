@@ -37,6 +37,29 @@ spec:
         ports:
         - name: http1
           containerPort: 8080
+        env:
+        - name: APP_ENVIRONMENT
+          value: "PRODUCTION"
+        - name: FATSECRET_CLIENT_ID
+          valueFrom:
+            secretKeyRef:
+              name: FATSECRET_CLIENT_ID
+              key: latest
+        - name: FATSECRET_CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: FATSECRET_CLIENT_SECRET
+              key: latest
+        - name: USDA_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: USDA_API_KEY
+              key: latest
+        - name: OPENAI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: OPENAI_API_KEY
+              key: latest
         resources:
           limits:
             cpu: "1"
@@ -52,14 +75,3 @@ spec:
           periodSeconds: 10
           timeoutSeconds: 5
           failureThreshold: 3
-        volumeMounts:
-        - name: firebase-credentials
-          mountPath: /app/credentials
-          readOnly: true
-      volumes:
-      - name: firebase-credentials
-        secret:
-          secretName: firebase-admin-key-prod
-          items:
-          - key: latest
-            path: firebase-admin-prod.json

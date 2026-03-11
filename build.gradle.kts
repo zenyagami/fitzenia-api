@@ -7,6 +7,10 @@ plugins {
 group = "com.zenthek.fitzenio.rest"
 version = "0.0.1"
 
+kotlin {
+    jvmToolchain(21)
+}
+
 application {
     mainClass = "io.ktor.server.netty.EngineMain"
 }
@@ -64,6 +68,7 @@ dependencies {
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.ktor.server.netty)
     implementation(libs.logback.classic)
+    implementation(libs.dotenv.kotlin)
 
     // Ktor Client for Http request
     implementation(libs.bundles.ktor.client)
