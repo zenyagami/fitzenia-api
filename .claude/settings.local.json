@@ -34,7 +34,11 @@
       "Bash(curl -s \"https://search.openfoodfacts.org/search?q=banana&page_size=2&fields=code,product_name,brands,serving_size,serving_quantity,image_url,nutriments&page=1\" 2>/dev/null | python3 -m json.tool 2>/dev/null | head -80)",
       "Bash(curl -s \"https://search.openfoodfacts.org/search?q=banana&page_size=1&fields=code,product_name,brands,serving_size,serving_quantity,image_url,nutriments&page=1\" 2>/dev/null | python3 -c \"\nimport json,sys\nd=json.load\\(sys.stdin\\)\nprint\\('count:', d['count']\\)\nprint\\('hits structure:'\\)\nif d['hits']:\n    print\\(json.dumps\\(d['hits'][0], indent=2\\)\\)\n\")",
       "Bash(curl -s \"https://search.openfoodfacts.org/autocomplete?q=ban&taxonomy_names=product_name&lang=en&size=5\" 2>/dev/null | python3 -m json.tool 2>/dev/null | head -50)",
-      "Bash(./gradlew compileKotlin 2>&1 | tail -30)"
+      "Bash(./gradlew compileKotlin 2>&1 | tail -30)",
+      "WebFetch(domain:platform.fatsecret.com)",
+      "Bash(./gradlew compileKotlin 2>&1 | tail -20)",
+      "Bash(./gradlew compileKotlin 2>&1 | tail -10)",
+      "Bash(./gradlew compileKotlin 2>&1 | tail -8)"
     ]
   }
 }

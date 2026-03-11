@@ -48,8 +48,14 @@ class FoodService(
         return null
     }
 
-    suspend fun autocomplete(query: String, limit: Int): List<String> =
-        runCatching { offClient.autocomplete(query, limit) }.getOrDefault(emptyList())
+    suspend fun autocomplete(query: String, limit: Int): List<String> = coroutineScope {
+        val offDeferred = async { runCatching { offClient.autocomplete(query, limit) }.getOrDefault(emptyList()) }
+        val fsDeferred = async { runCatching { fsClient.autocomplete(query, limit) }.getOrDefault(emptyList()) }
+
+        (offDeferred.await() + fsDeferred.await())
+            .distinct()
+            .take(limit)
+    }
 
     suspend fun search(query: String, page: Int, pageSize: Int): List<FoodItem> = coroutineScope {
         val offDeferred = async { runCatching { offClient.search(query, page, pageSize) }.getOrNull() }

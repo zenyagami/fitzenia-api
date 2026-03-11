@@ -1,5 +1,6 @@
 package com.zenthek.routes
 
+import com.zenthek.model.SearchResponse
 import com.zenthek.service.FoodService
 import com.zenthek.services.OpenAiApiService
 import io.ktor.http.*
@@ -42,15 +43,7 @@ fun Application.configureRouting(
 
                 val results = foodService.search(query, page, pageSize)
 
-                call.respond(
-                    HttpStatusCode.OK,
-                    mapOf(
-                        "results" to results,
-                        "totalResults" to results.size,
-                        "page" to page,
-                        "pageSize" to pageSize
-                    )
-                )
+                call.respond(HttpStatusCode.OK, SearchResponse(results, results.size, page, pageSize))
             }
 
             get("/barcode/{barcode}") {

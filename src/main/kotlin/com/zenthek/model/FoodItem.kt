@@ -40,6 +40,14 @@ data class FoodItem(
 )
 
 @Serializable
+data class SearchResponse(
+    val results: List<FoodItem>,
+    val totalResults: Int,
+    val page: Int,
+    val pageSize: Int
+)
+
+@Serializable
 data class ApiError(
     val code: String,   // e.g. "MISSING_QUERY", "UPSTREAM_FAILURE"
     val message: String

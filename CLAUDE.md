@@ -38,47 +38,51 @@ and upstream API details.
 ## Project structure
 
 ```
-food-api/
+fitzenio-api/
 ├── src/
 │   └── main/
 │       ├── kotlin/
-│       │   └── com/zenthek/foodapi/
+│       │   └── com/zenthek/
 │       │       ├── Application.kt              # embeddedServer entry point
 │       │       ├── config/
-│       │       │   └── ApiKeys.kt              # env var loading, requireEnv()
-│       │       ├── plugins/
-│       │       │   ├── Routing.kt              # installRoutes() call
-│       │       │   ├── Serialization.kt        # ContentNegotiation + Json
-│       │       │   ├── StatusPages.kt          # error → HTTP status mapping
-│       │       │   └── RequestLogging.kt       # CallLogging plugin config
+│       │       │   └── Environment.kt          # env var loading
 │       │       ├── model/
-│       │       │   ├── FoodItem.kt             # canonical response model
-│       │       │   ├── NutritionPer100g.kt     # embedded in FoodItem
-│       │       │   ├── SearchResponse.kt       # wraps List<FoodItem>
-│       │       │   └── ApiError.kt             # error response body
+│       │       │   └── FoodItem.kt             # FoodItem, NutritionInfo, ServingSize,
+│       │       │                               # SearchResponse, ApiError
 │       │       ├── routes/
-│       │       │   ├── FoodRoutes.kt           # GET /food/search, GET /food/barcode/{barcode}
-│       │       │   └── HealthRoute.kt          # GET /health
+│       │       │   └── Routing.kt              # all routes: health, search, barcode,
+│       │       │                               # autocomplete, analyze-image
 │       │       ├── service/
-│       │       │   └── FoodService.kt          # orchestration: fan-out, merge, deduplicate
+│       │       │   ├── FoodService.kt          # fan-out, merge, deduplicate, autocomplete
+│       │       │   └── UpstreamFailureException.kt
+│       │       ├── network/
+│       │       │   └── HttpClientProvider.kt
 │       │       ├── upstream/
-│       │       │   ├── OpenFoodFactsClient.kt  # OFF API calls
-│       │       │   ├── FatSecretClient.kt      # FatSecret OAuth2 + search
-│       │       │   └── UsdaClient.kt           # USDA FoodData Central calls
-│       │       └── mapper/
-│       │           ├── OpenFoodFactsMapper.kt  # OFF DTO → FoodItem
-│       │           ├── FatSecretMapper.kt      # FatSecret DTO → FoodItem
-│       │           └── UsdaMapper.kt           # USDA DTO → FoodItem
+│       │       │   ├── openfoodfacts/
+│       │       │   │   ├── OpenFoodFactsClient.kt   # v3 product + search-a-licious search + autocomplete
+│       │       │   │   └── dto/OpenFoodFactsDto.kt
+│       │       │   ├── fatsecret/
+│       │       │   │   ├── FatSecretClient.kt       # foods.search.v5 + autocomplete.v2 + barcode
+│       │       │   │   ├── FatSecretTokenManager.kt # OAuth2 with Mutex
+│       │       │   │   └── dto/FatSecretDto.kt
+│       │       │   └── usda/
+│       │       │       ├── UsdaClient.kt
+│       │       │       └── dto/UsdaDto.kt
+│       │       ├── mapper/
+│       │       │   ├── OpenFoodFactsMapper.kt  # map() for barcode, mapV3Search() for search
+│       │       │   ├── FatSecretMapper.kt      # mapDetail() for both barcode and search
+│       │       │   └── UsdaMapper.kt
+│       │       └── upstream/openai/
+│       │           └── OpenAiApiService.kt     # image analysis
 │       └── resources/
 │           ├── application.yaml
-│           ├── logback.xml                     # dev: colored console
-│           └── logback-prod.xml                # prod: JSON structured
-├── src/test/kotlin/com/zenthek/foodapi/
+│           └── logback.xml                     # dev: DEBUG for com.zenthek
+├── src/test/kotlin/com/zenthek/
 │   ├── mapper/                                 # mapper unit tests with fixture DTOs
 │   ├── routes/                                 # testApplication { } integration tests
 │   └── upstream/                              # MockEngine client tests
-├── .env.example                                # commit this — not .env
-├── .gitignore                                  # must include .env
+├── .env.example
+├── .gitignore
 ├── Dockerfile
 ├── deploy.sh
 ├── build.gradle.kts
@@ -145,6 +149,7 @@ fun Application.module() {
 - Route handlers only validate input and delegate to `FoodService`
 - **Never call upstream APIs from route handlers directly**
 - Keep route files thin — extract complex query param parsing to separate functions if needed
+- **Never use `mapOf(...)` with mixed value types for responses** — kotlinx.serialization cannot serialize `Map<String, Any>`. Always use a typed `@Serializable` data class instead.
 
 ---
 
@@ -474,15 +479,15 @@ class OpenFoodFactsMapperTest {
 fun `search returns parsed results`() = runTest {
     val client = HttpClient(MockEngine { request ->
         respond(
-            content = ByteReadChannel("""{"products": [...]}"""),
+            content = ByteReadChannel("""{"hits": [], "count": 0, "page": 1, "page_size": 25}"""),
             status = HttpStatusCode.OK,
             headers = headersOf(HttpHeaders.ContentType, "application/json")
         )
     }) { install(ContentNegotiation) { json() } }
 
     val offClient = OpenFoodFactsClient(client)
-    val result = offClient.search("banana")
-    assertTrue(result.isSuccess)
+    val result = offClient.search("banana", 0, 25)
+    assertTrue(result.isEmpty())
 }
 ```
 
@@ -500,7 +505,10 @@ fun `GET food search returns 200`() = testApplication {
 ### FatSecret JsonTransformingSerializer test
 
 Test both the object-shaped and array-shaped responses explicitly — this is the most fragile serialization
-in the project. Use literal JSON strings as fixtures.
+in the project. Use literal JSON strings as fixtures. Affected fields:
+- `servings.serving` — single object or array
+- `foods_search.results.food` — single object or array
+- `suggestions.suggestion` — single string or array
 
 ---
 
@@ -511,10 +519,14 @@ in the project. Use literal JSON strings as fixtures.
 - **FatSecret token mutex is mandatory** — without a `Mutex`, concurrent requests will race to refresh
   the OAuth2 token, causing double-refresh and potential token invalidation
 - **USDA search uses GET** with query params (not POST)
-- **OFF search uses `/api/v2/search`** — not the legacy `/cgi/search.pl` endpoint
-- **FatSecret search method is `foods.search`** — not `foods.search.v3`
-- **FatSecret `serving`/`food` fields are polymorphic** — they can be a JSON object OR a JSON array
-  depending on result count; always use `JsonTransformingSerializer` to normalize to array
+- **OFF barcode uses `/api/v3/product/{code}`** — response `status` is now a string `"success"`, not integer `1`
+- **OFF search uses `https://search.openfoodfacts.org/search`** (search-a-licious) — response has `hits` (not `products`), `brands` is `List<String>` (not a comma-separated string), page is 1-indexed
+- **OFF autocomplete uses `https://search.openfoodfacts.org/search`** with small `page_size` — returns product name strings
+- **FatSecret search uses `foods.search.v5`** via `GET https://platform.fatsecret.com/rest/foods/search/v5` — response is `foods_search.results.food[...]` with full servings inline; requires **premier scope**
+- **FatSecret autocomplete uses `foods.autocomplete.v2`** via `GET https://platform.fatsecret.com/rest/food/autocomplete/v2` — parameter is `expression`, response is `suggestions.suggestion` (single string or array); requires **premier scope**
+- **FatSecret `serving`, `results.food`, and `suggestions.suggestion` fields are polymorphic** — they can be a JSON object/string OR an array; always use `JsonTransformingSerializer` to normalize to list
+- **FatSecret `mapDetail()` covers both barcode and search** — v5 search returns full servings per food item, so `mapSummary` (description-regex parsing) is gone
+- **Never use `mapOf(...)` with mixed value types for Ktor responses** — use a typed `@Serializable` data class; `Map<String, Any>` causes a serialization runtime error
 - **One Ktor client instance** shared across all upstream clients is fine — configure per-call timeouts
   if needed via `.config {}`. Do not create a separate client per upstream service.
 - **No shared state between requests** — the service is stateless except for the in-memory FatSecret

@@ -1,9 +1,9 @@
 package com.zenthek.upstream.fatsecret.dto
 
-import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonTransformingSerializer
@@ -15,56 +15,17 @@ data class FatSecretTokenResponse(
     @SerialName("expires_in") val expiresIn: Long
 )
 
-// The search endpoint returns lists that can be either object or array
-private object FoodSearchListSerializer :
-    JsonTransformingSerializer<List<FatSecretFoodSummaryDto>>(
-        ListSerializer(FatSecretFoodSummaryDto.serializer())
-    ) {
-    override fun transformDeserialize(element: JsonElement): JsonElement =
-        if (element is JsonArray) element else JsonArray(listOf(element))
-}
-
-@Serializable
-data class FatSecretSearchResponse(
-    val foods: FatSecretFoodsWrapper
-)
-
-@Serializable
-data class FatSecretFoodsWrapper(
-    @SerialName("max_results") val maxResults: String? = null,
-    @SerialName("total_results") val totalResults: String? = null,
-    @SerialName("page_number") val pageNumber: String? = null,
-    @Serializable(with = FoodSearchListSerializer::class)
-    val food: List<FatSecretFoodSummaryDto> = emptyList()
-)
-
-@Serializable
-data class FatSecretFoodSummaryDto(
-    @SerialName("food_id") val foodId: String,
-    @SerialName("food_name") val foodName: String,
-    @SerialName("food_type") val foodType: String? = null,
-    @SerialName("brand_name") val brandName: String? = null,
-    @SerialName("food_url") val foodUrl: String? = null,
-    @SerialName("food_description") val foodDescription: String
-)
+// --- Barcode lookup ---
 
 @Serializable
 data class FatSecretBarcodeResponse(
-    val food_id: FatSecretFoodIdDto? = null,  // null = barcode not in FatSecret
+    val food_id: FatSecretFoodIdDto? = null
 )
 
 @Serializable
 data class FatSecretFoodIdDto(val value: String = "")
 
-// Serving Lists in details can be JSON object or Array
-private object ServingListSerializer :
-    JsonTransformingSerializer<List<FatSecretServingDto>>(
-        ListSerializer(FatSecretServingDto.serializer())
-    ) {
-    override fun transformDeserialize(element: JsonElement): JsonElement =
-        if (element is JsonArray) element else JsonArray(listOf(element))
-}
-
+// --- Food detail (used by barcode lookup via food.get.v4) ---
 
 @Serializable
 data class FatSecretFoodDetailResponse(
@@ -80,6 +41,14 @@ data class FatSecretFoodDetailDto(
     val servings: FatSecretServingsWrapper? = null
 )
 
+private object ServingListSerializer :
+    JsonTransformingSerializer<List<FatSecretServingDto>>(
+        ListSerializer(FatSecretServingDto.serializer())
+    ) {
+    override fun transformDeserialize(element: JsonElement): JsonElement =
+        if (element is JsonArray) element else JsonArray(listOf(element))
+}
+
 @Serializable
 data class FatSecretServingsWrapper(
     @Serializable(with = ServingListSerializer::class)
@@ -92,6 +61,7 @@ data class FatSecretServingDto(
     @SerialName("serving_description") val servingDescription: String? = null,
     @SerialName("metric_serving_amount") val metricServingAmount: String? = null,
     @SerialName("metric_serving_unit") val metricServingUnit: String? = null,
+    @SerialName("is_default") val isDefault: String? = null,
     val calories: String? = null,
     val carbohydrate: String? = null,
     val protein: String? = null,
@@ -100,4 +70,52 @@ data class FatSecretServingDto(
     val fiber: String? = null,
     val sodium: String? = null,
     val sugar: String? = null
+)
+
+// --- foods.search.v5 ---
+
+private object FoodDetailListSerializer :
+    JsonTransformingSerializer<List<FatSecretFoodDetailDto>>(
+        ListSerializer(FatSecretFoodDetailDto.serializer())
+    ) {
+    override fun transformDeserialize(element: JsonElement): JsonElement =
+        if (element is JsonArray) element else JsonArray(listOf(element))
+}
+
+@Serializable
+data class FatSecretV5SearchResponse(
+    @SerialName("foods_search") val foodsSearch: FatSecretV5FoodsSearch
+)
+
+@Serializable
+data class FatSecretV5FoodsSearch(
+    @SerialName("max_results") val maxResults: String? = null,
+    @SerialName("total_results") val totalResults: String? = null,
+    @SerialName("page_number") val pageNumber: String? = null,
+    val results: FatSecretV5Results? = null
+)
+
+@Serializable
+data class FatSecretV5Results(
+    @Serializable(with = FoodDetailListSerializer::class)
+    val food: List<FatSecretFoodDetailDto> = emptyList()
+)
+
+// --- foods.autocomplete.v2 ---
+
+private object SuggestionListSerializer :
+    JsonTransformingSerializer<List<String>>(ListSerializer(String.serializer())) {
+    override fun transformDeserialize(element: JsonElement): JsonElement =
+        if (element is JsonArray) element else JsonArray(listOf(element))
+}
+
+@Serializable
+data class FatSecretAutocompleteResponse(
+    val suggestions: FatSecretSuggestionsWrapper? = null
+)
+
+@Serializable
+data class FatSecretSuggestionsWrapper(
+    @Serializable(with = SuggestionListSerializer::class)
+    val suggestion: List<String> = emptyList()
 )
