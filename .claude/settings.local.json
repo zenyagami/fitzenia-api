@@ -38,7 +38,8 @@
       "WebFetch(domain:platform.fatsecret.com)",
       "Bash(./gradlew compileKotlin 2>&1 | tail -20)",
       "Bash(./gradlew compileKotlin 2>&1 | tail -10)",
-      "Bash(./gradlew compileKotlin 2>&1 | tail -8)"
+      "Bash(./gradlew compileKotlin 2>&1 | tail -8)",
+      "Bash(./gradlew build:*)"
     ]
   }
 }

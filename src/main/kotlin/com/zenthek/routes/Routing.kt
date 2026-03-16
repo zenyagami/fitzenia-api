@@ -68,6 +68,13 @@ fun Application.configureRouting(
                 val result = openAiClient.analyzeImage(imageBytes, body.mealTitle, body.additionalContext, body.locale, "image/jpeg")
                 call.respond(HttpStatusCode.OK, result)
             }
+
+            post("/analyze-image-fast") {
+                val body = call.receive<AnalyzeImageRequest>()
+                val imageBytes = java.util.Base64.getDecoder().decode(body.image)
+                val result = openAiClient.analyzeImageFast(imageBytes, body.mealTitle, body.additionalContext, body.locale, "image/jpeg")
+                call.respond(HttpStatusCode.OK, result)
+            }
         }
     }
 }

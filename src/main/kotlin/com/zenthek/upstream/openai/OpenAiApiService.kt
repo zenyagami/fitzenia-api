@@ -163,6 +163,23 @@ class OpenAiApiService(
     private val client: HttpClient,
     private val apiKey: String
 ) {
+    private fun buildImageRequest(
+        imageBytes: ByteArray,
+        mealTitle: String?,
+        additionalContext: String?,
+        locale: String?,
+        mimeType: String
+    ): Pair<String, String> {
+        val dataUrl = "data:$mimeType;base64,${Base64.getEncoder().encodeToString(imageBytes)}"
+        val userText = buildString {
+            if (!locale.isNullOrBlank()) append("Locale: $locale — return all text fields in the language of this locale.\n")
+            if (!mealTitle.isNullOrBlank()) append("The user described this meal as: \"$mealTitle\"\n")
+            if (!additionalContext.isNullOrBlank()) append("Additional context: \"$additionalContext\"\n")
+            append("Analyze the food in this image.")
+        }
+        return dataUrl to userText
+    }
+
     suspend fun analyzeImage(
         imageBytes: ByteArray,
         mealTitle: String?,
@@ -170,15 +187,7 @@ class OpenAiApiService(
         locale: String?,
         mimeType: String
     ): ImageAnalysisResponse {
-        val base64Image = Base64.getEncoder().encodeToString(imageBytes)
-        val dataUrl = "data:$mimeType;base64,$base64Image"
-
-        val userText = buildString {
-            if (!locale.isNullOrBlank()) append("Locale: $locale — return all text fields in the language of this locale.\n")
-            if (!mealTitle.isNullOrBlank()) append("The user described this meal as: \"$mealTitle\"\n")
-            if (!additionalContext.isNullOrBlank()) append("Additional context: \"$additionalContext\"\n")
-            append("Analyze the food in this image.")
-        }
+        val (dataUrl, userText) = buildImageRequest(imageBytes, mealTitle, additionalContext, locale, mimeType)
 
         val requestBody = buildJsonObject {
             put("model", "gpt-5-mini")
@@ -220,6 +229,60 @@ class OpenAiApiService(
             ?.jsonArray
             ?.firstOrNull { it.jsonObject["type"]?.jsonPrimitive?.content == "output_text" }
             ?.jsonObject?.get("text")
+            ?.jsonPrimitive?.content
+            ?: error("Unexpected OpenAI response structure: $responseText")
+
+        return json.decodeFromString(ImageAnalysisResponse.serializer(), content)
+    }
+
+    suspend fun analyzeImageFast(
+        imageBytes: ByteArray,
+        mealTitle: String?,
+        additionalContext: String?,
+        locale: String?,
+        mimeType: String
+    ): ImageAnalysisResponse {
+        val (dataUrl, userText) = buildImageRequest(imageBytes, mealTitle, additionalContext, locale, mimeType)
+
+        val requestBody = buildJsonObject {
+            put("model", "gpt-4o-mini")
+            put("max_tokens", 3000)
+            putJsonArray("messages") {
+                addJsonObject {
+                    put("role", "system")
+                    put("content", SYSTEM_PROMPT)
+                }
+                addJsonObject {
+                    put("role", "user")
+                    putJsonArray("content") {
+                        addJsonObject {
+                            put("type", "text")
+                            put("text", userText)
+                        }
+                        addJsonObject {
+                            put("type", "image_url")
+                            putJsonObject("image_url") { put("url", dataUrl) }
+                        }
+                    }
+                }
+            }
+        }
+
+        val response = client.post("https://api.openai.com/v1/chat/completions") {
+            header(HttpHeaders.Authorization, "Bearer $apiKey")
+            contentType(ContentType.Application.Json)
+            setBody(requestBody)
+            timeout { requestTimeoutMillis = 30_000 }
+        }
+
+        val responseText = response.bodyAsText()
+        val responseJson = json.parseToJsonElement(responseText).jsonObject
+
+        val content = responseJson["choices"]
+            ?.jsonArray
+            ?.firstOrNull()
+            ?.jsonObject?.get("message")
+            ?.jsonObject?.get("content")
             ?.jsonPrimitive?.content
             ?: error("Unexpected OpenAI response structure: $responseText")
 
