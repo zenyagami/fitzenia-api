@@ -63,18 +63,24 @@ data class ImageAnalysisItem(
     val proteinG: Double,
     val carbsG: Double,
     val fatG: Double,
-    val fiberG: Double?
+    val fiberG: Double?,
+    val sodiumMg: Int? = null
 )
 
 @Serializable
 data class ImageAnalysisResponse(
+    val errorCode: String? = null,
+    val title: String? = null,
+    val subtitle: String? = null,
+    val isLikelyRestaurant: Boolean = false,
     val items: List<ImageAnalysisItem>,
     val totalCalories: Int,
     val totalProteinG: Double,
     val totalCarbsG: Double,
     val totalFatG: Double,
     val totalFiberG: Double?,
-    val notes: String?
+    val totalSodiumMg: Int? = null,
+    val notes: String? = null
 )
 
 @Serializable
