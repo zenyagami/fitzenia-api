@@ -5,14 +5,15 @@
 # CLAUDE.md — Food API Backend
 
 > Ktor-based food API proxy that aggregates Open Food Facts, FatSecret, and USDA FoodData Central.
+> Also provides AI-powered image analysis via Gemini (primary) or OpenAI (fallback).
 > Deployed as a containerized JVM service on Google Cloud Run.
 
 ## Project overview
 
 This service is a thin aggregation proxy that the Fitzenio mobile app calls for food search and barcode
 lookup. It does not store data — it fans out to up to three upstream food APIs, merges the results, and
-returns a normalized response. See `food-api-backend.md` for the full endpoint spec, response schemas,
-and upstream API details.
+returns a normalized response. It also exposes image analysis endpoints backed by Gemini or OpenAI.
+See `food-api-backend.md` for the full endpoint spec, response schemas, and upstream API details.
 
 **Deployment target:** Google Cloud Run (containerized, stateless, scales to zero)
 
@@ -22,15 +23,15 @@ and upstream API details.
 
 | Concern | Library | Notes |
 |---|---|---|
-| **Server** | Ktor 3.1.x (Netty engine) | `ktor-server-netty` |
-| **HTTP client** | Ktor 3.1.x (CIO engine) | `ktor-client-cio` |
-| **Serialization** | kotlinx.serialization 1.7.x | JSON only |
-| **Logging** | Logback 1.5.x | Console (dev) / JSON (prod) |
-| **JSON logging** | logstash-logback-encoder 8.x | Production structured logs |
-| **Dev env loading** | dotenv-kotlin 6.x | Load `.env` in development only |
-| **JDK** | 21 | Eclipse Temurin in Docker |
-| **Build** | Gradle 8.x Kotlin DSL | Version catalog preferred |
-| **Fat JAR** | Shadow JAR plugin | `gradle shadowJar` → single runnable jar |
+| **Server** | Ktor 3.2.3 (Netty engine) | `ktor-server-netty` |
+| **HTTP client** | Ktor 3.2.3 (CIO engine) | `ktor-client-cio` |
+| **Serialization** | kotlinx.serialization 1.7.3 | JSON only |
+| **Logging** | Logback 1.5.13 | Console output only (single `logback.xml`) |
+| **Dev env loading** | dotenv-kotlin 6.4.1 | Always loaded, `ignoreIfMissing = true` |
+| **Image analysis** | Gemini Flash Lite (primary) / GPT-4o mini (fallback) | Controlled by `config.useGemini` |
+| **JDK** | 21 | Eclipse Temurin in container |
+| **Build** | Gradle 8.x Kotlin DSL + version catalog | `gradle/libs.versions.toml` |
+| **Container build** | Jib plugin | `./gradlew jib` pushes to GCR; no Dockerfile |
 
 ---
 
@@ -41,16 +42,18 @@ fitzenio-api/
 ├── src/
 │   └── main/
 │       ├── kotlin/
+│       │   ├── Application.kt                  # EngineMain entry point (package com.zenthek.fitzenio.rest)
 │       │   └── com/zenthek/
-│       │       ├── Application.kt              # embeddedServer entry point
 │       │       ├── config/
-│       │       │   └── Environment.kt          # env var loading
+│       │       │   └── Environment.kt          # AppConfig, ApiKeys, AppEnvironment, ConfigLoader
 │       │       ├── model/
-│       │       │   └── FoodItem.kt             # FoodItem, NutritionInfo, ServingSize,
-│       │       │                               # SearchResponse, ApiError
+│       │       │   ├── FoodItem.kt             # FoodItem, NutritionInfo, ServingSize,
+│       │       │   │                           # SearchResponse, ApiError,
+│       │       │   │                           # ImageAnalysisItem, ImageAnalysisResponse, AnalyzeImageRequest
+│       │       │   └── ImageAnalyzer.kt        # ImageAnalyzer functional interface + ImageAnalyzerFactory (system prompt)
 │       │       ├── routes/
 │       │       │   └── Routing.kt              # all routes: health, search, barcode,
-│       │       │                               # autocomplete, analyze-image
+│       │       │                               # autocomplete, analyze-image, analyze-image-stream
 │       │       ├── service/
 │       │       │   ├── FoodService.kt          # fan-out, merge, deduplicate, autocomplete
 │       │       │   └── UpstreamFailureException.kt
@@ -64,26 +67,34 @@ fitzenio-api/
 │       │       │   │   ├── FatSecretClient.kt       # foods.search.v5 + autocomplete.v2 + barcode
 │       │       │   │   ├── FatSecretTokenManager.kt # OAuth2 with Mutex
 │       │       │   │   └── dto/FatSecretDto.kt
-│       │       │   └── usda/
-│       │       │       ├── UsdaClient.kt
-│       │       │       └── dto/UsdaDto.kt
-│       │       ├── mapper/
-│       │       │   ├── OpenFoodFactsMapper.kt  # map() for barcode, mapV3Search() for search
-│       │       │   ├── FatSecretMapper.kt      # mapDetail() for both barcode and search
-│       │       │   └── UsdaMapper.kt
-│       │       └── upstream/openai/
-│       │           └── OpenAiApiService.kt     # image analysis
+│       │       │   ├── usda/
+│       │       │   │   ├── UsdaClient.kt
+│       │       │   │   └── dto/UsdaDto.kt
+│       │       │   ├── gemini/
+│       │       │   │   └── GeminiApiService.kt      # Gemini Flash Lite image analysis (primary)
+│       │       │   └── openai/
+│       │       │       └── OpenAiApiService.kt      # GPT-4o mini image analysis (fallback)
+│       │       └── mapper/
+│       │           ├── OpenFoodFactsMapper.kt  # map() for barcode, mapV3Search() for search
+│       │           ├── FatSecretMapper.kt      # mapDetail() for both barcode and search
+│       │           └── UsdaMapper.kt
 │       └── resources/
-│           ├── application.yaml
-│           └── logback.xml                     # dev: DEBUG for com.zenthek
+│           ├── application.conf                # HOCON config: port, module ref, PROJECT_ID
+│           └── logback.xml                     # console output, DEBUG for com.zenthek
 ├── src/test/kotlin/com/zenthek/
 │   ├── mapper/                                 # mapper unit tests with fixture DTOs
 │   ├── routes/                                 # testApplication { } integration tests
 │   └── upstream/                              # MockEngine client tests
+├── gradle/
+│   └── libs.versions.toml                     # centralized version catalog
 ├── .env.example
 ├── .gitignore
-├── Dockerfile
-├── deploy.sh
+├── cloud-run-config.yaml                       # production Cloud Run service config
+├── cloud-run-config.dev.yaml                   # staging Cloud Run service config
+├── deploy.sh                                   # production deploy (fitzenio GCP project)
+├── deploy-dev.sh                               # staging deploy (fitzenio-debug GCP project)
+├── grant-secrets.sh                            # Secret Manager IAM bindings
+├── DEPLOY.md                                   # deployment guide
 ├── build.gradle.kts
 └── settings.gradle.kts
 ```
@@ -107,126 +118,135 @@ fitzenio-api/
 - Every I/O operation is `suspend`
 - Concurrent upstream calls use `coroutineScope { async { } }` — not `GlobalScope`, not `launch`
 - FatSecret token refresh uses a `Mutex` — mandatory to prevent concurrent refresh races
+- Gemini context cache management also uses a `Mutex` to prevent concurrent refresh races
 
 ### Serialization
 
 - `@Serializable` on every DTO class
 - Single `Json` instance configured with `ignoreUnknownKeys = true`, `isLenient = false`
-- Install it in `Serialization.kt` plugin and reuse the same instance for upstream client configuration
+- Install it via `ContentNegotiation` plugin and reuse the same instance for upstream client configuration
 - FatSecret `serving` and `food` fields can be a JSON object **or** an array — use `JsonTransformingSerializer` to normalize to array before deserialization. This is the most fragile part — test it explicitly.
 
 ### Dependency injection
 
-No DI framework. Use plain constructor injection:
+No DI framework. Use plain constructor injection via `ConfigLoader`:
 
 ```kotlin
 // Application.kt
 fun Application.module() {
-    val apiKeys = ApiKeys.fromEnv()
+    val config = ConfigLoader.loadConfig()  // loads AppConfig with ApiKeys + image analysis config
     val httpClient = buildHttpClient()
-    val offClient = OpenFoodFactsClient(httpClient)
-    val fatSecretClient = FatSecretClient(httpClient, apiKeys)
-    val usdaClient = UsdaClient(httpClient, apiKeys)
-    val foodService = FoodService(offClient, fatSecretClient, usdaClient)
 
-    configureSerialization()
-    configureStatusPages()
-    configureRequestLogging()
-    configureRouting(foodService)
+    val offClient = OpenFoodFactsClient(httpClient)
+    val fsTokenManager = FatSecretTokenManager(httpClient, config.apiKeys)
+    val fsClient = FatSecretClient(httpClient, fsTokenManager)
+    val usdaClient = UsdaClient(httpClient, config.apiKeys.usdaApiKey)
+    val imageAnalyzer: ImageAnalyzer = if (config.useGemini) {
+        GeminiApiService(httpClient, config.geminiApiKey)
+    } else {
+        OpenAiApiService(httpClient, config.apiKeys.openAiApiKey)
+    }
+    val foodService = FoodService(offClient, fsClient, usdaClient)
+
+    install(ContentNegotiation) { json(appJson) }
+    install(StatusPages) { ... }
+    configureRouting(foodService, imageAnalyzer)
 }
 ```
 
 ### Error handling
 
 - Throw domain exceptions in the service layer (e.g., `NotFoundException`, `UpstreamException`)
-- Catch all `Throwable` in `StatusPages` — map to HTTP status + `ApiError` body
+- Catch all `Throwable` in `StatusPages` — map to HTTP 500 + `mapOf("error" to ..., "message" to ...)`
 - **Never return internal error details or stack traces to clients**
-- Log the real cause server-side with `call.application.log.error("...", cause)`
+- Log the real cause server-side with `log.error("...", cause)`
 
 ### Route handlers
 
-- Route handlers only validate input and delegate to `FoodService`
+- Route handlers only validate input and delegate to `FoodService` or `ImageAnalyzer`
 - **Never call upstream APIs from route handlers directly**
 - Keep route files thin — extract complex query param parsing to separate functions if needed
-- **Never use `mapOf(...)` with mixed value types for responses** — kotlinx.serialization cannot serialize `Map<String, Any>`. Always use a typed `@Serializable` data class instead.
+- **Never use `mapOf(...)` with mixed value types for responses** — kotlinx.serialization cannot serialize `Map<String, Any>`. Always use a typed `@Serializable` data class instead. (Exception: homogeneous `Map<String, String>` is fine.)
+
+---
+
+## Image analysis
+
+Two endpoints are exposed under `/api/food`:
+
+- `POST /api/food/analyze-image` — synchronous, returns `ImageAnalysisResponse` JSON
+- `POST /api/food/analyze-image-stream` — streaming SSE; sends `status` events during analysis, then a final `result` or `error` event
+
+Both accept `AnalyzeImageRequest` (base64-encoded image bytes + optional `mealTitle`, `additionalContext`, `locale`, `mimeType`).
+
+The `ImageAnalyzer` functional interface decouples route handlers from the backend:
+
+```kotlin
+fun interface ImageAnalyzer {
+    suspend fun analyzeImage(
+        imageBytes: ByteArray,
+        mealTitle: String?,
+        additionalContext: String?,
+        locale: String?,
+        mimeType: String
+    ): ImageAnalysisResponse
+}
+```
+
+**Backends:**
+
+| Backend | Class | Notes |
+|---|---|---|
+| **Gemini** (primary) | `GeminiApiService` | Flash Lite model; context cache with 1h TTL, Mutex-protected; 90s timeout |
+| **OpenAI** (fallback) | `OpenAiApiService` | GPT-4o mini via Responses API; reasoning effort "low"; 120s timeout |
+
+Selection is controlled by `config.useGemini` (currently hardcoded `true` in `ConfigLoader`).
+The system prompt lives in `ImageAnalyzerFactory.IMAGE_ANALYZE_SYSTEM_PROMPT` inside `ImageAnalyzer.kt`.
 
 ---
 
 ## Environment & configuration
 
-### Debug (local development)
-
-1. Copy `.env.example` to `.env` and fill in real keys
-2. `dotenv-kotlin` loads `.env` automatically when `APP_ENV` is not `production`
-3. `application.yaml` sets `development: true` and port `8080`
-4. Logback uses colored console output at `DEBUG` level for `com.zenthek`
-5. Run with `./gradlew run` — Ktor development mode enables auto-reload
-
-### Production (Cloud Run)
-
-1. Secrets are injected as Cloud Run environment variables — **no `.env` file in prod**
-2. `application.yaml` reads port from `${PORT:8080}` (Cloud Run injects `PORT` automatically)
-3. `APP_ENV=production` — set this in the Cloud Run deploy command
-4. Logback uses JSON structured output (`logback-prod.xml`) for Google Cloud Logging integration
-5. The Dockerfile sets `-Dlogback.configurationFile=logback-prod.xml`
-
-### `config/ApiKeys.kt` pattern
+### `config/Environment.kt` — `ConfigLoader` pattern
 
 ```kotlin
+data class AppConfig(
+    val environment: AppEnvironment,
+    val apiKeys: ApiKeys,
+    val useGemini: Boolean,
+    val geminiApiKey: String,
+)
+
 data class ApiKeys(
     val fatSecretClientId: String,
     val fatSecretClientSecret: String,
     val usdaApiKey: String,
-) {
-    companion object {
-        fun fromEnv() = ApiKeys(
-            fatSecretClientId = requireEnv("FATSECRET_CLIENT_ID"),
-            fatSecretClientSecret = requireEnv("FATSECRET_CLIENT_SECRET"),
-            usdaApiKey = requireEnv("USDA_API_KEY"),
-        )
-    }
-}
-
-private fun requireEnv(name: String) =
-    System.getenv(name) ?: error("Missing required env var: $name")
-```
-
-Call `ApiKeys.fromEnv()` once in `Application.module()` at startup. If a required var is missing the
-server fails immediately with a clear error — no silent null propagation.
-
-### dotenv-kotlin integration
-
-Load `.env` before `ApiKeys.fromEnv()` in development:
-
-```kotlin
-fun Application.module() {
-    if (System.getenv("APP_ENV") != "production") {
-        // dotenv-kotlin: loads .env from working directory if it exists
-        val dotenv = dotenv { ignoreIfMissing = true }
-        dotenv.entries().forEach { (key, value) ->
-            if (System.getenv(key) == null) {
-                // dotenv-kotlin does NOT set system env vars — use dotenv["KEY"] directly
-                // or configure ApiKeys to accept a map
-            }
-        }
-    }
-    // ...
-}
-```
-
-Simpler approach: configure `ApiKeys` to accept `dotenv["KEY"] ?: System.getenv("KEY")`:
-
-```kotlin
-// In Application.module(), always load dotenv (ignoreIfMissing = true in prod)
-val dotenv = dotenv { ignoreIfMissing = true }
-val apiKeys = ApiKeys(
-    fatSecretClientId = dotenv["FATSECRET_CLIENT_ID"],
-    fatSecretClientSecret = dotenv["FATSECRET_CLIENT_SECRET"],
-    usdaApiKey = dotenv["USDA_API_KEY"],
+    val openAiApiKey: String,
 )
+
+object ConfigLoader {
+    fun loadConfig(): AppConfig { ... }  // reads via dotenv (ignoreIfMissing = true)
+}
 ```
 
-`dotenv-kotlin` falls back to system env vars automatically when a key is not in `.env`.
+`ConfigLoader.loadConfig()` is called once at startup. Missing required vars cause an immediate startup
+failure with a clear error — no silent null propagation.
+
+### Debug (local development)
+
+1. Copy `.env.example` to `.env` and fill in real keys
+2. `dotenv-kotlin` is always loaded with `ignoreIfMissing = true` — falls back to system env vars
+3. `application.conf` sets port `8080` (overridable via `PORT` env var)
+4. `APP_ENVIRONMENT=development` (or absent) → `AppEnvironment.DEVELOPMENT`
+5. Logback uses console output at `DEBUG` level for `com.zenthek`
+6. Run with `./gradlew run` — Ktor development mode enables auto-reload
+
+### Production (Cloud Run)
+
+1. Secrets are injected via Cloud Run environment variables or Secret Manager — **no `.env` file in prod**
+2. `application.conf` reads port from `${?PORT}` (Cloud Run injects `PORT` automatically)
+3. `APP_ENVIRONMENT=production` — set in Cloud Run service config
+4. Container is built and pushed with Jib: `./gradlew jib` (no Dockerfile)
 
 ---
 
@@ -239,186 +259,80 @@ val apiKeys = ApiKeys(
 | `FATSECRET_CLIENT_ID` | Yes | FatSecret OAuth2 client ID |
 | `FATSECRET_CLIENT_SECRET` | Yes | FatSecret OAuth2 client secret |
 | `USDA_API_KEY` | Yes | USDA FoodData Central API key |
+| `OPENAI_API_KEY` | Yes | OpenAI API key (fallback image analysis) |
+| `GEMINI_API_KEY` | Yes | Google Gemini API key (primary image analysis) |
 | `PORT` | No (default `8080`) | Injected by Cloud Run automatically |
-| `APP_ENV` | No (default `development`) | Set to `production` on Cloud Run |
-
-### Shell-only (used by `deploy.sh`, never injected into the server)
-
-| Variable | Description |
-|---|---|
-| `GCP_PROJECT_ID` | Your Google Cloud project ID |
-| `CLOUD_RUN_REGION` | Cloud Run region (default `us-central1`) |
-| `STAGING_FATSECRET_CLIENT_ID` | Staging-specific FatSecret client ID (separate quota) |
-| `STAGING_FATSECRET_CLIENT_SECRET` | Staging-specific FatSecret client secret |
-| `STAGING_USDA_API_KEY` | Staging-specific USDA key |
+| `APP_ENVIRONMENT` | No (default `development`) | Set to `production` on Cloud Run |
 
 ---
 
 ## `.env.example` — commit this file verbatim
 
 ```
-# Runtime — copy to .env and fill in real values (never commit .env)
-FATSECRET_CLIENT_ID=your_client_id_here
-FATSECRET_CLIENT_SECRET=your_client_secret_here
-USDA_API_KEY=your_usda_key_here
-APP_ENV=development
+# Copy this file to .env and fill in real values. Never commit .env
+FATSECRET_CLIENT_ID=your_fatsecret_client_id
+FATSECRET_CLIENT_SECRET=your_fatsecret_client_secret
+USDA_API_KEY=your_usda_api_key
+OPENAI_API_KEY=your_openai_api_key
+APP_ENVIRONMENT=development
 PORT=8080
-
-# Deploy script (shell only — not injected into the server)
-GCP_PROJECT_ID=your-gcp-project-id
-CLOUD_RUN_REGION=us-central1
-STAGING_FATSECRET_CLIENT_ID=your_staging_client_id
-STAGING_FATSECRET_CLIENT_SECRET=your_staging_client_secret
-STAGING_USDA_API_KEY=your_staging_usda_key
+USE_GEMINI=false
+GEMINI_API_KEY=your_gemini_api_key_here
 ```
 
 ---
 
 ## Logback configuration
 
-### `logback.xml` (development — colored console)
+### `logback.xml` (single config — console output for both dev and prod)
 
 ```xml
 <configuration>
     <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
         <encoder>
-            <pattern>%d{HH:mm:ss.SSS} %highlight(%-5level) %cyan(%logger{36}) - %msg%n</pattern>
+            <pattern>%d{YYYY-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
         </encoder>
     </appender>
-
-    <logger name="com.zenthek" level="DEBUG"/>
-    <logger name="io.ktor" level="INFO"/>
-
     <root level="INFO">
         <appender-ref ref="STDOUT"/>
     </root>
+    <logger name="com.zenthek" level="DEBUG"/>
+    <logger name="org.eclipse.jetty" level="INFO"/>
+    <logger name="io.netty" level="INFO"/>
 </configuration>
 ```
 
-### `logback-prod.xml` (production — JSON for Google Cloud Logging)
-
-```xml
-<configuration>
-    <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
-        <encoder class="net.logstash.logback.encoder.LogstashEncoder"/>
-    </appender>
-
-    <logger name="com.zenthek" level="INFO"/>
-    <logger name="io.ktor" level="WARN"/>
-
-    <root level="WARN">
-        <appender-ref ref="STDOUT"/>
-    </root>
-</configuration>
-```
-
-The Dockerfile activates the production config via `-Dlogback.configurationFile=logback-prod.xml`.
+There is no separate `logback-prod.xml`. Cloud Run captures stdout and forwards it to Google Cloud Logging.
 
 ---
 
-## Dockerfile
+## Container build (Jib)
 
-```dockerfile
-FROM gradle:8.7-jdk21 AS builder
-WORKDIR /app
-COPY . .
-RUN gradle shadowJar --no-daemon
+There is **no Dockerfile** in this repository. Container images are built and pushed with the Jib Gradle plugin:
 
-FROM eclipse-temurin:21-jre-alpine
-WORKDIR /app
-COPY --from=builder /app/build/libs/*-all.jar app.jar
-EXPOSE 8080
-ENTRYPOINT ["java", "-Dlogback.configurationFile=logback-prod.xml", "-jar", "app.jar"]
+```bash
+./gradlew jib                  # push to GCR (dev target: gcr.io/fitzenio-debug/fitzenio-api-dev)
+./gradlew jib -Pprod           # push to GCR (prod target: gcr.io/fitzenio/fitzenio-api-prod)
+./gradlew jibDockerBuild       # build to local Docker daemon (for local testing)
 ```
 
-The production image is Alpine-based JRE only — no Gradle, no source. Keep it small.
+Jib config in `build.gradle.kts`: base image `eclipse-temurin:21-jre` (linux/amd64), tagged `latest` + timestamp.
 
 ---
 
-## `deploy.sh` — Cloud Run deployment script
+## Deployment
 
-Supports two environments: `staging` and `production`. Each deploys to a separate Cloud Run service.
-Secrets are passed as env vars in the deploy command — no Secret Manager setup required.
+See `DEPLOY.md` for the full deployment guide.
 
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
+Two environments with separate GCP projects:
 
-ENV="${1:-production}"   # staging | production
+| Environment | Script | GCP Project | Cloud Run Service |
+|---|---|---|---|
+| **Staging/Dev** | `./deploy-dev.sh` | `fitzenio-debug` | `fitzenio-api-dev` |
+| **Production** | `./deploy.sh` | `fitzenio` | `fitzenio-api-prod` |
 
-PROJECT_ID="${GCP_PROJECT_ID:?Set GCP_PROJECT_ID env var}"
-REGION="${CLOUD_RUN_REGION:-us-central1}"
-IMAGE="gcr.io/$PROJECT_ID/food-api"
-
-case "$ENV" in
-  staging)
-    SERVICE_NAME="food-api-staging"
-    FATSECRET_ID="${STAGING_FATSECRET_CLIENT_ID:?Set STAGING_FATSECRET_CLIENT_ID}"
-    FATSECRET_SECRET="${STAGING_FATSECRET_CLIENT_SECRET:?Set STAGING_FATSECRET_CLIENT_SECRET}"
-    USDA_KEY="${STAGING_USDA_API_KEY:?Set STAGING_USDA_API_KEY}"
-    ;;
-  production)
-    SERVICE_NAME="food-api"
-    FATSECRET_ID="${FATSECRET_CLIENT_ID:?Set FATSECRET_CLIENT_ID}"
-    FATSECRET_SECRET="${FATSECRET_CLIENT_SECRET:?Set FATSECRET_CLIENT_SECRET}"
-    USDA_KEY="${USDA_API_KEY:?Set USDA_API_KEY}"
-    ;;
-  *)
-    echo "Usage: $0 [staging|production]"
-    exit 1
-    ;;
-esac
-
-echo "Deploying to Cloud Run [$ENV] → $SERVICE_NAME ($REGION)..."
-
-./gradlew shadowJar --no-daemon
-docker build -t "$IMAGE" .
-docker push "$IMAGE"
-
-gcloud run deploy "$SERVICE_NAME" \
-  --image "$IMAGE" \
-  --platform managed \
-  --region "$REGION" \
-  --memory 512Mi \
-  --cpu 1 \
-  --min-instances 0 \
-  --max-instances 10 \
-  --set-env-vars "APP_ENV=production,FATSECRET_CLIENT_ID=$FATSECRET_ID,FATSECRET_CLIENT_SECRET=$FATSECRET_SECRET,USDA_API_KEY=$USDA_KEY" \
-  --allow-unauthenticated \
-  --project "$PROJECT_ID"
-
-echo "Done. URL:"
-gcloud run services describe "$SERVICE_NAME" \
-  --region "$REGION" \
-  --project "$PROJECT_ID" \
-  --format "value(status.url)"
-```
-
-### Deploy usage
-
-```bash
-# Prerequisites
-gcloud auth login
-gcloud auth configure-docker
-# Docker Desktop must be running
-
-export GCP_PROJECT_ID=my-gcp-project
-
-# Deploy to staging
-export STAGING_FATSECRET_CLIENT_ID=...
-export STAGING_FATSECRET_CLIENT_SECRET=...
-export STAGING_USDA_API_KEY=...
-./deploy.sh staging
-
-# Deploy to production
-export FATSECRET_CLIENT_ID=...
-export FATSECRET_CLIENT_SECRET=...
-export USDA_API_KEY=...
-./deploy.sh production   # or just: ./deploy.sh
-```
-
-Staging (`food-api-staging`) and production (`food-api`) are **separate Cloud Run services** with
-separate API keys — useful for preserving your daily FatSecret free-tier quota during development.
+Cloud Run service configs: `cloud-run-config.yaml` (prod), `cloud-run-config.dev.yaml` (staging).
+Secrets are managed via Google Cloud Secret Manager (`grant-secrets.sh` sets IAM bindings).
 
 ---
 
@@ -428,12 +342,11 @@ separate API keys — useful for preserving your daily FatSecret free-tier quota
 ./gradlew run                          # Start dev server (port 8080, auto-reload)
 ./gradlew run --continuous             # Rebuild + restart on code changes
 ./gradlew test                         # Run all tests
-./gradlew shadowJar                    # Build fat JAR → build/libs/*-all.jar
-docker build -t food-api .             # Build container locally
-docker run -p 8080:8080 \
-  --env-file .env food-api             # Run container with local .env
-./deploy.sh staging                    # Deploy to Cloud Run staging
-./deploy.sh production                 # Deploy to Cloud Run production (default)
+./gradlew jibDockerBuild               # Build container image to local Docker daemon
+./gradlew jib                          # Build + push to GCR (dev)
+./gradlew jib -Pprod                   # Build + push to GCR (prod)
+./deploy-dev.sh                        # Deploy to Cloud Run staging
+./deploy.sh                            # Deploy to Cloud Run production
 ```
 
 ---
@@ -441,13 +354,14 @@ docker run -p 8080:8080 \
 ## Security rules
 
 - **Never commit `.env`** — add it to `.gitignore` on project creation, before any other commit
-- **Never hardcode API keys** — always `System.getenv()` or dotenv; catch missing keys at startup
-- **Never log secrets** — no `println(apiKeys)`, no logging full request bodies that may contain keys
+- **Never hardcode API keys** — always via `ConfigLoader` / dotenv; catch missing keys at startup
+- **Never log secrets** — no `println(config)`, no logging full request bodies that may contain keys
 - **Never return internal error details to clients** — `StatusPages` catches `Throwable` and returns
-  a generic `500` body (`ApiError`); log the real cause server-side only
+  a generic 500 body; log the real cause server-side only
 - Open Food Facts requires no key — but always send a `User-Agent` header identifying the app
   (OFF's fair-use policy requires this): `User-Agent: FitzenioApp/1.0 (contact@zenthek.com)`
 - FatSecret OAuth2 token is cached in memory — never written to disk, never logged
+- Gemini context cache ID is cached in memory — never written to disk, never logged
 
 ---
 
@@ -496,7 +410,7 @@ fun `search returns parsed results`() = runTest {
 @Test
 fun `GET food search returns 200`() = testApplication {
     application { module() }
-    val response = client.get("/food/search?q=banana")
+    val response = client.get("/api/food/search?q=banana")
     assertEquals(HttpStatusCode.OK, response.status)
 }
 ```
@@ -513,10 +427,11 @@ in the project. Use literal JSON strings as fixtures. Affected fields:
 
 ## Important constraints
 
-- **Never expose raw upstream errors to clients** — normalize all upstream failures to `ApiError` with
-  a generic message; log the real error with context
+- **Never expose raw upstream errors to clients** — normalize all upstream failures to a generic error
+  response; log the real error with context
 - **FatSecret token mutex is mandatory** — without a `Mutex`, concurrent requests will race to refresh
   the OAuth2 token, causing double-refresh and potential token invalidation
+- **Gemini context cache mutex is mandatory** — same race condition risk as FatSecret token
 - **USDA search uses GET** with query params (not POST)
 - **OFF barcode uses `/api/v3/product/{code}`** — response `status` is now a string `"success"`, not integer `1`
 - **OFF search uses `https://search.openfoodfacts.org/search`** (search-a-licious) — response has `hits` (not `products`), `brands` is `List<String>` (not a comma-separated string), page is 1-indexed
@@ -526,60 +441,46 @@ in the project. Use literal JSON strings as fixtures. Affected fields:
 - **FatSecret `serving`, `results.food`, and `suggestions.suggestion` fields are polymorphic** — they can be a JSON object/string OR an array; always use `JsonTransformingSerializer` to normalize to list
 - **FatSecret `mapDetail()` covers both barcode and search** — v5 search returns full servings per food item, so `mapSummary` (description-regex parsing) is gone
 - **Never use `mapOf(...)` with mixed value types for Ktor responses** — use a typed `@Serializable` data class; `Map<String, Any>` causes a serialization runtime error
-- **One Ktor client instance** shared across all upstream clients is fine — configure per-call timeouts
-  if needed via `.config {}`. Do not create a separate client per upstream service.
+- **One Ktor client instance** shared across all upstream clients — configured with `requestTimeoutMillis = 10_000` and `connectTimeoutMillis = 5_000`; do not create a separate client per upstream service
 - **No shared state between requests** — the service is stateless except for the in-memory FatSecret
-  token cache (which is intentional and protected by a Mutex)
-- **Scale-to-zero friendly** — do not assume warm state; FatSecret token will need re-fetch on cold start
+  token cache and Gemini context cache ID (both intentional and protected by Mutexes)
+- **Scale-to-zero friendly** — do not assume warm state; FatSecret token and Gemini context cache will need re-fetch on cold start
 
 ---
 
 ## Gradle dependencies reference
 
-```kotlin
-// build.gradle.kts
-val ktorVersion = "3.1.0"
-val kotlinxSerializationVersion = "1.7.3"
-val logbackVersion = "1.5.12"
+Dependencies are managed via the version catalog at `gradle/libs.versions.toml`.
 
-dependencies {
-    // Ktor server
-    implementation("io.ktor:ktor-server-netty:$ktorVersion")
-    implementation("io.ktor:ktor-server-content-negotiation:$ktorVersion")
-    implementation("io.ktor:ktor-server-status-pages:$ktorVersion")
-    implementation("io.ktor:ktor-server-call-logging:$ktorVersion")
-    implementation("io.ktor:ktor-server-default-headers:$ktorVersion")
+Key versions: Kotlin `2.1.10`, Ktor `3.2.3`, kotlinx.serialization `1.7.3`, kotlinx.coroutines `1.9.0`, Logback `1.5.13`, dotenv-kotlin `6.4.1`.
 
-    // Ktor client
-    implementation("io.ktor:ktor-client-cio:$ktorVersion")
-    implementation("io.ktor:ktor-client-content-negotiation:$ktorVersion")
-    implementation("io.ktor:ktor-client-logging:$ktorVersion")
-
-    // Serialization
-    implementation("io.ktor:ktor-serialization-kotlinx-json:$ktorVersion")
-    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:$kotlinxSerializationVersion")
-
-    // Logging
-    implementation("ch.qos.logback:logback-classic:$logbackVersion")
-    implementation("net.logstash.logback:logstash-logback-encoder:8.0")
-
-    // Dev env loading
-    implementation("io.github.cdimascio:dotenv-kotlin:6.4.1")
-
-    // Testing
-    testImplementation("io.ktor:ktor-server-test-host:$ktorVersion")
-    testImplementation("io.ktor:ktor-client-mock:$ktorVersion")
-    testImplementation("org.jetbrains.kotlin:kotlin-test")
-}
-```
-
-Apply the Shadow plugin in `plugins {}`:
+Plugins in `build.gradle.kts`:
 
 ```kotlin
 plugins {
-    kotlin("jvm") version "2.1.0"
-    kotlin("plugin.serialization") version "2.1.0"
-    id("io.ktor.plugin") version "3.1.0"
-    id("com.github.johnrengelman.shadow") version "8.1.1"
+    alias(libs.plugins.kotlin.jvm)
+    alias(libs.plugins.kotlin.serialization)
+    alias(libs.plugins.ktor)
+}
+```
+
+Key dependencies:
+
+```kotlin
+dependencies {
+    implementation(libs.ktor.server.auth)
+    implementation(libs.ktor.server.core)
+    implementation(libs.ktor.server.content.negotiation)
+    implementation(libs.ktor.serialization.kotlinx.json)
+    implementation(libs.ktor.server.status.pages)
+    implementation(libs.kotlinx.serialization.json)
+    implementation(libs.kotlinx.coroutines.core)
+    implementation(libs.ktor.server.netty)
+    implementation(libs.logback.classic)
+    implementation(libs.dotenv.kotlin)
+    implementation(libs.bundles.ktor.client)   // core, cio, content-negotiation, logging, auth
+
+    testImplementation(libs.ktor.server.test.host)
+    testImplementation(libs.kotlin.test.junit)
 }
 ```
