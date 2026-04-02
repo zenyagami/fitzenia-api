@@ -66,6 +66,16 @@ spec:
             secretKeyRef:
               name: GEMINI_API_KEY
               key: latest
+        - name: SUPABASE_DEV_URL
+          valueFrom:
+            secretKeyRef:
+              name: SUPABASE_DEV_URL
+              key: latest
+        - name: SUPABASE_DEV_SERVICE_ROLE_KEY
+          valueFrom:
+            secretKeyRef:
+              name: SUPABASE_DEV_SERVICE_ROLE_KEY
+              key: latest
         resources:
           limits:
             cpu: "1"
