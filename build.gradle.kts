@@ -74,5 +74,6 @@ dependencies {
     implementation(libs.bundles.ktor.client)
 
     testImplementation(libs.ktor.server.test.host)
+    testImplementation(libs.ktor.client.mock)
     testImplementation(libs.kotlin.test.junit)
 }

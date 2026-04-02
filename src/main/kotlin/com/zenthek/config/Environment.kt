@@ -10,6 +10,7 @@ data class AppConfig(
     val apiKeys: ApiKeys,
     val useGemini: Boolean,
     val geminiApiKey: String,
+    val supabase: SupabaseConfig,
 )
 
 data class ApiKeys(
@@ -17,6 +18,11 @@ data class ApiKeys(
     val fatSecretClientSecret: String,
     val usdaApiKey: String,
     val openAiApiKey: String
+)
+
+data class SupabaseConfig(
+    val url: String,
+    val serviceRoleKey: String,
 )
 
 
@@ -57,6 +63,10 @@ object ConfigLoader {
             ),
             useGemini = true,
             geminiApiKey = env("GEMINI_API_KEY") ?: error("Missing GEMINI_API_KEY"),
+            supabase = SupabaseConfig(
+                url = env("SUPABASE_DEV_URL") ?: error("Missing SUPABASE_URL"),
+                serviceRoleKey = env("SUPABASE_DEV_SERVICE_ROLE_KEY") ?: error("Missing SUPABASE_DEV_SERVICE_ROLE_KEY"),
+            ),
         )
     }
 
@@ -70,7 +80,11 @@ object ConfigLoader {
                 openAiApiKey = env("OPENAI_API_KEY") ?: error("Missing OPENAI_API_KEY")
             ),
             useGemini = true,
-            geminiApiKey = env("GEMINI_API_KEY") ?: error("Missing GEMINI_API_KEY")
+            geminiApiKey = env("GEMINI_API_KEY") ?: error("Missing GEMINI_API_KEY"),
+            supabase = SupabaseConfig(
+                url = env("SUPABASE_URL") ?: error("Missing SUPABASE_URL"),
+                serviceRoleKey = env("SUPABASE_SERVICE_ROLE_KEY") ?: error("Missing SUPABASE_SERVICE_ROLE_KEY"),
+            ),
         )
     }
 }

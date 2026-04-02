@@ -34,6 +34,7 @@ ktor-client-cio = { module = "io.ktor:ktor-client-cio" }
 ktor-client-content = { module = "io.ktor:ktor-client-content-negotiation" }
 ktor-client-logging = { module = "io.ktor:ktor-client-logging" }
 ktor-client-auth = { module = "io.ktor:ktor-client-auth" }
+ktor-client-mock = { module = "io.ktor:ktor-client-mock", version.ref = "ktor" }
 
 [bundles]
 ktor-client = [
@@ -49,6 +50,5 @@ ktor-client = [
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
 kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
 ktor = { id = "io.ktor.plugin", version.ref = "ktor" }
-
 
 

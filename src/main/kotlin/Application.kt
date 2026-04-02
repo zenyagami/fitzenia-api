@@ -1,8 +1,13 @@
 package com.zenthek.fitzenio.rest
 
 import com.zenthek.model.ImageAnalyzer
+import com.zenthek.model.ErrorResponse
 import com.zenthek.routes.configureRouting
 import com.zenthek.service.FoodService
+import com.zenthek.service.UnauthorizedException
+import com.zenthek.service.UpstreamFailureException
+import com.zenthek.service.UserProfileService
+import com.zenthek.upstream.supabase.SupabaseClient
 import com.zenthek.upstream.openai.OpenAiApiService
 import com.zenthek.upstream.fatsecret.FatSecretClient
 import com.zenthek.upstream.gemini.GeminiApiService
@@ -12,12 +17,14 @@ import com.zenthek.upstream.usda.UsdaClient
 import io.ktor.client.*
 import io.ktor.client.engine.cio.*
 import io.ktor.client.plugins.*
+import io.ktor.server.plugins.BadRequestException
 import io.ktor.serialization.kotlinx.json.*
 import io.ktor.server.application.*
 import com.zenthek.config.ConfigLoader
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.netty.*
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.server.plugins.ContentTransformationException
 import io.ktor.server.plugins.statuspages.StatusPages
 import io.ktor.server.response.respond
 import kotlinx.serialization.json.Json
@@ -47,7 +54,15 @@ fun Application.module() {
     }
 
     val foodService = FoodService(offClient, fsClient, usdaClient)
+    val supabaseClient = SupabaseClient(httpClient, config.supabase)
+    val userProfileService = UserProfileService(supabaseClient)
 
+    configureSerialization()
+    configureStatusPages()
+    configureRouting(foodService, imageAnalyzer, userProfileService)
+}
+
+fun Application.configureSerialization() {
     val appJson = Json {
         prettyPrint = true
         isLenient = true
@@ -57,19 +72,49 @@ fun Application.module() {
     install(ContentNegotiation) {
         json(appJson)
     }
+}
 
+fun Application.configureStatusPages() {
     install(StatusPages) {
+        exception<IllegalArgumentException> { call, cause ->
+            call.respond(
+                HttpStatusCode.BadRequest,
+                ErrorResponse(cause.message ?: "Bad request")
+            )
+        }
+        exception<BadRequestException> { call, _ ->
+            call.respond(
+                HttpStatusCode.BadRequest,
+                ErrorResponse("Bad request")
+            )
+        }
+        exception<ContentTransformationException> { call, _ ->
+            call.respond(
+                HttpStatusCode.BadRequest,
+                ErrorResponse("Invalid request body")
+            )
+        }
+        exception<UnauthorizedException> { call, cause ->
+            call.respond(
+                HttpStatusCode.Unauthorized,
+                ErrorResponse(cause.message ?: "Unauthorized")
+            )
+        }
+        exception<UpstreamFailureException> { call, cause ->
+            call.application.log.error("Upstream dependency failure", cause)
+            call.respond(
+                HttpStatusCode.BadGateway,
+                ErrorResponse("Upstream dependency failure")
+            )
+        }
         exception<Throwable> { call, cause ->
+            call.application.log.error("Unhandled error", cause)
             call.respond(
                 HttpStatusCode.InternalServerError,
-                mapOf(
-                    "error" to "Internal server error",
-                    "message" to (cause.message ?: "Unknown error")
-                )
+                ErrorResponse("Internal server error")
             )
         }
     }
-    configureRouting(foodService, imageAnalyzer)
 }
 
 fun buildHttpClient(): HttpClient = HttpClient(CIO) {
