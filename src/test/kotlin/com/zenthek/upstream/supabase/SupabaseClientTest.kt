@@ -142,6 +142,5 @@ class SupabaseClientTest {
         heightCm = 170.0,
         createdAt = 1_700_000_000_000,
         lastModifiedAt = 1_700_000_000_000,
-        syncStatus = "PENDING",
     )
 }

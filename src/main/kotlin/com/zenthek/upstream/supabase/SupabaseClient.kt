@@ -1,7 +1,9 @@
 package com.zenthek.upstream.supabase
 
 import com.zenthek.config.SupabaseConfig
+import com.zenthek.model.CalorieTargetEntity
 import com.zenthek.model.UserProfileEntity
+import com.zenthek.model.UserGoalEntity
 import com.zenthek.service.UnauthorizedException
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
@@ -28,7 +30,11 @@ data class SupabaseAuthenticatedUser(
 interface SupabaseGateway {
     suspend fun validateAccessToken(accessToken: String): Result<SupabaseAuthenticatedUser>
     suspend fun profileExists(userId: String): Result<Boolean>
+    suspend fun userGoalExists(userId: String): Result<Boolean>
+    suspend fun calorieTargetExists(userId: String): Result<Boolean>
     suspend fun insertUserProfile(userId: String, profile: UserProfileEntity): Result<Unit>
+    suspend fun insertUserGoal(userId: String, userGoal: UserGoalEntity): Result<Unit>
+    suspend fun insertCalorieTarget(userId: String, calorieTarget: CalorieTargetEntity): Result<Unit>
 }
 
 class SupabaseClient(
@@ -67,25 +73,23 @@ class SupabaseClient(
         SupabaseAuthenticatedUser(id = user.id, email = user.email)
     }
 
-    override suspend fun profileExists(userId: String): Result<Boolean> = runCatching {
-        log.info("[SUPABASE] checking user_profile for userId={}", userId)
-        val response = httpClient.get("$normalizedBaseUrl/rest/v1/user_profile") {
-            header("apikey", config.serviceRoleKey)
-            bearerAuth(config.serviceRoleKey)
-            parameter("select", "id")
-            parameter("user_id", "eq.$userId")
-            parameter("limit", 1)
-        }
+    override suspend fun profileExists(userId: String): Result<Boolean> = existsInTable(
+        tableName = "user_profile",
+        userId = userId,
+        label = "profile"
+    )
 
-        if (!response.status.isSuccess()) {
-            log.error("[SUPABASE] user_profile lookup failed userId={} status={}", userId, response.status.value)
-            throw IllegalStateException("Supabase profile lookup failed with ${response.status.value}")
-        }
+    override suspend fun userGoalExists(userId: String): Result<Boolean> = existsInTable(
+        tableName = "user_goal",
+        userId = userId,
+        label = "goal"
+    )
 
-        val exists = response.body<List<SupabaseUserProfileIdDto>>().isNotEmpty()
-        log.info("[SUPABASE] user_profile exists check userId={} exists={}", userId, exists)
-        exists
-    }
+    override suspend fun calorieTargetExists(userId: String): Result<Boolean> = existsInTable(
+        tableName = "calorie_target",
+        userId = userId,
+        label = "calorie_target"
+    )
 
     override suspend fun insertUserProfile(userId: String, profile: UserProfileEntity): Result<Unit> = runCatching {
         log.info("[SUPABASE] inserting user_profile userId={} profileId={}", userId, profile.id)
@@ -108,6 +112,70 @@ class SupabaseClient(
         }
         log.info("[SUPABASE] user_profile insert success userId={} profileId={}", userId, profile.id)
     }
+
+    override suspend fun insertUserGoal(userId: String, userGoal: UserGoalEntity): Result<Unit> = runCatching {
+        log.info("[SUPABASE] inserting user_goal userId={} goalId={}", userId, userGoal.id)
+        val response = httpClient.post("$normalizedBaseUrl/rest/v1/user_goal") {
+            header("apikey", config.serviceRoleKey)
+            bearerAuth(config.serviceRoleKey)
+            header(HttpHeaders.Prefer, "return=minimal")
+            contentType(ContentType.Application.Json)
+            setBody(userGoal.toInsertDto(userId))
+        }
+
+        if (!response.status.isSuccess()) {
+            log.error(
+                "[SUPABASE] user_goal insert failed userId={} goalId={} status={}",
+                userId,
+                userGoal.id,
+                response.status.value
+            )
+            throw IllegalStateException("Supabase user_goal insert failed with ${response.status.value}")
+        }
+        log.info("[SUPABASE] user_goal insert success userId={} goalId={}", userId, userGoal.id)
+    }
+
+    override suspend fun insertCalorieTarget(userId: String, calorieTarget: CalorieTargetEntity): Result<Unit> = runCatching {
+        log.info("[SUPABASE] inserting calorie_target userId={} calorieTargetId={}", userId, calorieTarget.id)
+        val response = httpClient.post("$normalizedBaseUrl/rest/v1/calorie_target") {
+            header("apikey", config.serviceRoleKey)
+            bearerAuth(config.serviceRoleKey)
+            header(HttpHeaders.Prefer, "return=minimal")
+            contentType(ContentType.Application.Json)
+            setBody(calorieTarget.toInsertDto(userId))
+        }
+
+        if (!response.status.isSuccess()) {
+            log.error(
+                "[SUPABASE] calorie_target insert failed userId={} calorieTargetId={} status={}",
+                userId,
+                calorieTarget.id,
+                response.status.value
+            )
+            throw IllegalStateException("Supabase calorie_target insert failed with ${response.status.value}")
+        }
+        log.info("[SUPABASE] calorie_target insert success userId={} calorieTargetId={}", userId, calorieTarget.id)
+    }
+
+    private suspend fun existsInTable(tableName: String, userId: String, label: String): Result<Boolean> = runCatching {
+        log.info("[SUPABASE] checking {} for userId={}", tableName, userId)
+        val response = httpClient.get("$normalizedBaseUrl/rest/v1/$tableName") {
+            header("apikey", config.serviceRoleKey)
+            bearerAuth(config.serviceRoleKey)
+            parameter("select", "id")
+            parameter("user_id", "eq.$userId")
+            parameter("limit", 1)
+        }
+
+        if (!response.status.isSuccess()) {
+            log.error("[SUPABASE] {} lookup failed userId={} status={}", tableName, userId, response.status.value)
+            throw IllegalStateException("Supabase $tableName lookup failed with ${response.status.value}")
+        }
+
+        val exists = response.body<List<SupabaseEntityIdDto>>().isNotEmpty()
+        log.info("[SUPABASE] {} exists check userId={} exists={}", label, userId, exists)
+        exists
+    }
 }
 
 private fun UserProfileEntity.toInsertDto(userId: String): SupabaseInsertUserProfileDto = SupabaseInsertUserProfileDto(
@@ -119,7 +187,6 @@ private fun UserProfileEntity.toInsertDto(userId: String): SupabaseInsertUserPro
     heightCm = heightCm,
     createdAt = createdAt,
     lastModifiedAt = lastModifiedAt,
-    syncStatus = syncStatus,
     userId = userId,
 )
 
@@ -130,7 +197,7 @@ private data class SupabaseUserDto(
 )
 
 @Serializable
-private data class SupabaseUserProfileIdDto(
+private data class SupabaseEntityIdDto(
     val id: String,
 )
 
@@ -148,8 +215,112 @@ private data class SupabaseInsertUserProfileDto(
     val createdAt: Long,
     @SerialName("last_modified_at")
     val lastModifiedAt: Long,
-    @SerialName("sync_status")
-    val syncStatus: String,
+    @SerialName("user_id")
+    val userId: String,
+)
+
+private fun UserGoalEntity.toInsertDto(userId: String): SupabaseInsertUserGoalDto = SupabaseInsertUserGoalDto(
+    id = id,
+    goalDirection = goalDirection,
+    targetPhase = targetPhase,
+    goalWeightKg = goalWeightKg,
+    paceTier = paceTier,
+    activityLevel = activityLevel,
+    bodyFatPercent = bodyFatPercent,
+    bodyFatRangeKey = bodyFatRangeKey,
+    exerciseFrequency = exerciseFrequency,
+    stepsActivityBand = stepsActivityBand,
+    liftingExperience = liftingExperience,
+    proteinPreference = proteinPreference,
+    createdAt = createdAt,
+    lastModifiedAt = lastModifiedAt,
+    userId = userId,
+)
+
+@Serializable
+private data class SupabaseInsertUserGoalDto(
+    val id: String,
+    @SerialName("goal_direction")
+    val goalDirection: String,
+    @SerialName("target_phase")
+    val targetPhase: String,
+    @SerialName("goal_weight_kg")
+    val goalWeightKg: Double? = null,
+    @SerialName("pace_tier")
+    val paceTier: String,
+    @SerialName("activity_level")
+    val activityLevel: String,
+    @SerialName("body_fat_percent")
+    val bodyFatPercent: Double,
+    @SerialName("body_fat_range_key")
+    val bodyFatRangeKey: String,
+    @SerialName("exercise_frequency")
+    val exerciseFrequency: String,
+    @SerialName("steps_activity_band")
+    val stepsActivityBand: String,
+    @SerialName("lifting_experience")
+    val liftingExperience: String,
+    @SerialName("protein_preference")
+    val proteinPreference: String,
+    @SerialName("created_at")
+    val createdAt: Long,
+    @SerialName("last_modified_at")
+    val lastModifiedAt: Long,
+    @SerialName("user_id")
+    val userId: String,
+)
+
+private fun CalorieTargetEntity.toInsertDto(userId: String): SupabaseInsertCalorieTargetDto = SupabaseInsertCalorieTargetDto(
+    id = id,
+    formula = formula,
+    bmrKcal = bmrKcal,
+    tdeeKcal = tdeeKcal,
+    targetKcal = targetKcal,
+    targetMinKcal = targetMinKcal,
+    targetMaxKcal = targetMaxKcal,
+    macroMode = macroMode,
+    proteinTargetG = proteinTargetG,
+    carbsTargetG = carbsTargetG,
+    fatTargetG = fatTargetG,
+    appliedPaceTier = appliedPaceTier,
+    floorClamped = floorClamped,
+    warning = warning?.name,
+    createdAt = createdAt,
+    lastModifiedAt = lastModifiedAt,
+    userId = userId,
+)
+
+@Serializable
+private data class SupabaseInsertCalorieTargetDto(
+    val id: String,
+    val formula: String,
+    @SerialName("bmr_kcal")
+    val bmrKcal: Long,
+    @SerialName("tdee_kcal")
+    val tdeeKcal: Long,
+    @SerialName("target_kcal")
+    val targetKcal: Long,
+    @SerialName("target_min_kcal")
+    val targetMinKcal: Long,
+    @SerialName("target_max_kcal")
+    val targetMaxKcal: Long,
+    @SerialName("macro_mode")
+    val macroMode: String,
+    @SerialName("protein_target_g")
+    val proteinTargetG: Long,
+    @SerialName("carbs_target_g")
+    val carbsTargetG: Long,
+    @SerialName("fat_target_g")
+    val fatTargetG: Long,
+    @SerialName("applied_pace_tier")
+    val appliedPaceTier: String,
+    @SerialName("floor_clamped")
+    val floorClamped: Long,
+    val warning: String? = null,
+    @SerialName("created_at")
+    val createdAt: Long,
+    @SerialName("last_modified_at")
+    val lastModifiedAt: Long,
     @SerialName("user_id")
     val userId: String,
 )

@@ -3,8 +3,8 @@ package com.zenthek.routes
 import com.zenthek.model.AnalyzeImageRequest
 import com.zenthek.model.ImageAnalysisResponse
 import com.zenthek.model.ImageAnalyzer
+import com.zenthek.model.RegisterUserRequest
 import com.zenthek.model.SearchResponse
-import com.zenthek.model.UserProfileEntity
 import com.zenthek.service.FoodService
 import com.zenthek.service.UnauthorizedException
 import com.zenthek.service.UserProfileService
@@ -130,10 +130,10 @@ fun Route.configureUserRoutes(userProfileService: UserProfileService) {
     post("/register") {
         log.info("[USER] POST /api/user/register received")
         val accessToken = call.requireBearerToken()
-        val request = call.receive<UserProfileEntity>()
-        log.info("[USER] register payload validated at route level profileId={}", request.id)
+        val request = call.receive<RegisterUserRequest>()
+        log.info("[USER] register payload validated at route level")
         val response = userProfileService.registerIfAbsent(accessToken, request)
-        log.info("[USER] register completed profileId={} status={}", request.id, response.status)
+        log.info("[USER] register completed status={}", response.status)
         call.respond(HttpStatusCode.OK, response)
     }
 
