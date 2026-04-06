@@ -123,7 +123,6 @@ class UserProfileService(
         authenticatedUserId: String,
         authenticatedEmail: String?
     ) {
-        if (request.userProfile.name.isBlank()) throw IllegalArgumentException("userProfile.name must not be blank")
         if (request.userProfile.birthDate.isBlank()) throw IllegalArgumentException("userProfile.birthDate must not be blank")
         if (request.userProfile.sex.isBlank()) throw IllegalArgumentException("userProfile.sex must not be blank")
         if (request.userProfile.heightCm <= 0.0) throw IllegalArgumentException("userProfile.heightCm must be greater than 0")
@@ -163,7 +162,7 @@ class UserProfileService(
 
     private fun RegisterUserProfileInput.toServerProfile(tokenEmail: String, now: Long): UserProfileEntity = UserProfileEntity(
         id = UUID.randomUUID().toString(),
-        name = name.trim(),
+        name = name.trim().ifBlank { tokenEmail.substringBefore("@") },
         email = tokenEmail,
         birthDate = birthDate.trim(),
         sex = sex.trim(),
