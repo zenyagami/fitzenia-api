@@ -1,7 +1,10 @@
 package com.zenthek.fitzenio.rest
 
+import com.zenthek.auth.AuthenticatedUserContext
+import com.zenthek.auth.configureAuthentication
 import com.zenthek.model.ImageAnalyzer
 import com.zenthek.model.ErrorResponse
+import com.zenthek.routes.RateLimitNames
 import com.zenthek.routes.configureRouting
 import com.zenthek.service.FoodService
 import com.zenthek.service.UnauthorizedException
@@ -17,17 +20,25 @@ import com.zenthek.upstream.usda.UsdaClient
 import io.ktor.client.*
 import io.ktor.client.engine.cio.*
 import io.ktor.client.plugins.*
+import io.ktor.client.request.get
 import io.ktor.server.plugins.BadRequestException
 import io.ktor.serialization.kotlinx.json.*
 import io.ktor.server.application.*
+import io.ktor.server.auth.principal
 import com.zenthek.config.ConfigLoader
+import com.zenthek.config.SupabaseConfig
+import com.zenthek.config.SupabaseJwtVerificationMode
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.netty.*
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.server.plugins.ContentTransformationException
+import io.ktor.server.plugins.ratelimit.RateLimit
+import io.ktor.server.plugins.ratelimit.RateLimitName
 import io.ktor.server.plugins.statuspages.StatusPages
 import io.ktor.server.response.respond
+import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
+import kotlin.time.Duration.Companion.minutes
 
 fun main(args: Array<String>) {
     EngineMain.main(args)
@@ -45,7 +56,7 @@ fun Application.module() {
     val fsTokenManager = FatSecretTokenManager(httpClient, config.apiKeys)
     val fsClient = FatSecretClient(httpClient, fsTokenManager)
     val usdaClient = UsdaClient(httpClient, config.apiKeys.usdaApiKey)
-    val imageAnalyzer: ImageAnalyzer = if (config.useGemini) {
+    val imageAnalyzer: ImageAnalyzer = if (config.useGeminiForAiImage) {
         log.info("Image analysis backend: Gemini Flash")
         GeminiApiService(httpClient, config.geminiApiKey)
     } else {
@@ -57,9 +68,60 @@ fun Application.module() {
     val supabaseClient = SupabaseClient(httpClient, config.supabase)
     val userProfileService = UserProfileService(supabaseClient)
 
+    warnIfRemoteMode(config.supabase)
+    probeJwks(httpClient, config.supabase)
+
     configureSerialization()
     configureStatusPages()
+    configureRateLimit()
+    configureAuthentication(config.supabase, supabaseClient)
     configureRouting(foodService, imageAnalyzer, userProfileService)
+}
+
+fun Application.configureRateLimit() {
+    install(RateLimit) {
+        register(RateLimitName(RateLimitNames.FOOD_SEARCH)) {
+            rateLimiter(limit = 200, refillPeriod = 1.minutes)
+            requestKey { call -> call.authenticatedUserIdOrFail() }
+        }
+        register(RateLimitName(RateLimitNames.IMAGE_ANALYSIS)) {
+            rateLimiter(limit = 20, refillPeriod = 1.minutes)
+            requestKey { call -> call.authenticatedUserIdOrFail() }
+        }
+    }
+}
+
+private fun ApplicationCall.authenticatedUserIdOrFail(): String {
+    return principal<AuthenticatedUserContext>()?.userId
+        ?: throw UnauthorizedException("Authentication required")
+}
+
+private fun Application.warnIfRemoteMode(supabase: SupabaseConfig) {
+    if (supabase.jwtVerificationMode == SupabaseJwtVerificationMode.REMOTE) {
+        log.warn(
+            "Supabase JWT verification is running in REMOTE mode. " +
+                "Every request will call /auth/v1/user — use only as a temporary fallback."
+        )
+    }
+}
+
+private fun Application.probeJwks(httpClient: HttpClient, supabase: SupabaseConfig) {
+    if (supabase.jwtVerificationMode != SupabaseJwtVerificationMode.JWKS) return
+    val log = log
+    val jwksUrl = supabase.jwksUrl
+    launch {
+        runCatching { httpClient.get(jwksUrl) }
+            .onSuccess { response ->
+                if (response.status.value in 200..299) {
+                    log.info("Supabase JWKS reachable at {} (status {})", jwksUrl, response.status.value)
+                } else {
+                    log.warn("Supabase JWKS probe returned status {} for {}", response.status.value, jwksUrl)
+                }
+            }
+            .onFailure { error ->
+                log.warn("Supabase JWKS probe failed for {}: {}", jwksUrl, error.message)
+            }
+    }
 }
 
 fun Application.configureSerialization() {

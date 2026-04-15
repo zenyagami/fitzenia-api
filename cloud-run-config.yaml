@@ -72,11 +72,13 @@ spec:
             secretKeyRef:
               name: SUPABASE_URL
               key: latest
-        - name: SUPABASE_SERVICE_ROLE_KEY
+        - name: SUPABASE_PUBLISHABLE_KEY
           valueFrom:
             secretKeyRef:
-              name: SUPABASE_SERVICE_ROLE_KEY
+              name: SUPABASE_PUBLISHABLE_KEY
               key: latest
+        - name: SUPABASE_JWT_VERIFICATION_MODE
+          value: "JWKS"
         resources:
           limits:
             cpu: "1"

@@ -55,9 +55,21 @@ CREATE TABLE IF NOT EXISTS public.user_profile (
 
 ALTER TABLE public.user_profile ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "user_profile: owner access"
+CREATE POLICY "user_profile: select own rows"
     ON public.user_profile
+    FOR SELECT
     USING (user_id = auth.uid());
+
+CREATE POLICY "user_profile: insert own rows"
+    ON public.user_profile
+    FOR INSERT
+    WITH CHECK (user_id = auth.uid());
+
+CREATE POLICY "user_profile: update own rows"
+    ON public.user_profile
+    FOR UPDATE
+    USING (user_id = auth.uid())
+    WITH CHECK (user_id = auth.uid());
 ```
 
 > **No `sync_status`** — this table is backend-written only; the client treats it as read-only after the initial registration sync.
@@ -89,9 +101,21 @@ CREATE TABLE IF NOT EXISTS public.user_goal (
 
 ALTER TABLE public.user_goal ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "user_goal: owner access"
+CREATE POLICY "user_goal: select own rows"
     ON public.user_goal
+    FOR SELECT
     USING (user_id = auth.uid());
+
+CREATE POLICY "user_goal: insert own rows"
+    ON public.user_goal
+    FOR INSERT
+    WITH CHECK (user_id = auth.uid());
+
+CREATE POLICY "user_goal: update own rows"
+    ON public.user_goal
+    FOR UPDATE
+    USING (user_id = auth.uid())
+    WITH CHECK (user_id = auth.uid());
 ```
 
 > **No `sync_status`** — same reason as `user_profile`.
@@ -125,9 +149,21 @@ CREATE TABLE IF NOT EXISTS public.calorie_target (
 
 ALTER TABLE public.calorie_target ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "calorie_target: owner access"
+CREATE POLICY "calorie_target: select own rows"
     ON public.calorie_target
+    FOR SELECT
     USING (user_id = auth.uid());
+
+CREATE POLICY "calorie_target: insert own rows"
+    ON public.calorie_target
+    FOR INSERT
+    WITH CHECK (user_id = auth.uid());
+
+CREATE POLICY "calorie_target: update own rows"
+    ON public.calorie_target
+    FOR UPDATE
+    USING (user_id = auth.uid())
+    WITH CHECK (user_id = auth.uid());
 ```
 
 > **`floor_clamped`** is stored as `BIGINT` (0 = false, 1 = true) to match SQLDelight conventions on the client.  

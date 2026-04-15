@@ -66,16 +66,18 @@ spec:
             secretKeyRef:
               name: GEMINI_API_KEY
               key: latest
-        - name: SUPABASE_DEV_URL
+        - name: SUPABASE_URL
           valueFrom:
             secretKeyRef:
-              name: SUPABASE_DEV_URL
+              name: SUPABASE_URL
               key: latest
-        - name: SUPABASE_DEV_SERVICE_ROLE_KEY
+        - name: SUPABASE_PUBLISHABLE_KEY
           valueFrom:
             secretKeyRef:
-              name: SUPABASE_DEV_SERVICE_ROLE_KEY
+              name: SUPABASE_PUBLISHABLE_KEY
               key: latest
+        - name: SUPABASE_JWT_VERIFICATION_MODE
+          value: "JWKS"
         resources:
           limits:
             cpu: "1"
