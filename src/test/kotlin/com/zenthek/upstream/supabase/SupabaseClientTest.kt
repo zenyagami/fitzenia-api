@@ -21,11 +21,11 @@ import kotlin.test.assertTrue
 class SupabaseClientTest {
 
     @Test
-    fun `validateAccessToken returns user identity on success`() = runBlocking {
+    fun `fetchAuthenticatedUser returns user identity on success`() = runBlocking {
         val engine = MockEngine { request ->
             assertEquals("/auth/v1/user", request.url.encodedPath)
             assertEquals("Bearer access-token", request.headers[HttpHeaders.Authorization])
-            assertEquals("service-role-key", request.headers["apikey"])
+            assertEquals("publishable-key", request.headers["apikey"])
             respond(
                 content = """{"id":"user-123","email":"test@example.com"}""",
                 status = HttpStatusCode.OK,
@@ -34,13 +34,13 @@ class SupabaseClientTest {
         }
         val client = buildClient(engine)
 
-        val result = client.validateAccessToken("access-token")
+        val result = client.fetchAuthenticatedUser("access-token")
         assertTrue(result.isSuccess)
         assertEquals("user-123", result.getOrThrow().id)
     }
 
     @Test
-    fun `validateAccessToken returns failure on unauthorized token`() = runBlocking {
+    fun `fetchAuthenticatedUser returns failure on unauthorized token`() = runBlocking {
         val engine = MockEngine {
             respond(
                 content = """{"msg":"invalid token"}""",
@@ -50,7 +50,7 @@ class SupabaseClientTest {
         }
         val client = buildClient(engine)
 
-        val result = client.validateAccessToken("bad-token")
+        val result = client.fetchAuthenticatedUser("bad-token")
         assertTrue(result.isFailure)
     }
 
@@ -59,6 +59,8 @@ class SupabaseClientTest {
         val engine = MockEngine { request ->
             assertEquals("/rest/v1/user_profile", request.url.encodedPath)
             assertEquals("eq.user-123", request.url.parameters["user_id"])
+            assertEquals("publishable-key", request.headers["apikey"])
+            assertEquals("Bearer access-token", request.headers[HttpHeaders.Authorization])
             respond(
                 content = """[{"id":"profile-1"}]""",
                 status = HttpStatusCode.OK,
@@ -67,7 +69,7 @@ class SupabaseClientTest {
         }
         val client = buildClient(engine)
 
-        val result = client.profileExists("user-123")
+        val result = client.profileExists(accessToken = "access-token", userId = "user-123")
         assertTrue(result.getOrThrow())
     }
 
@@ -82,18 +84,21 @@ class SupabaseClientTest {
         }
         val client = buildClient(engine)
 
-        val result = client.profileExists("user-123")
+        val result = client.profileExists(accessToken = "access-token", userId = "user-123")
         assertFalse(result.getOrThrow())
     }
 
     @Test
     fun `insertUserProfile succeeds on 201`() = runBlocking {
-        val engine = MockEngine {
+        val engine = MockEngine { request ->
+            assertEquals("publishable-key", request.headers["apikey"])
+            assertEquals("Bearer access-token", request.headers[HttpHeaders.Authorization])
             respond(content = "", status = HttpStatusCode.Created)
         }
         val client = buildClient(engine)
 
         val result = client.insertUserProfile(
+            accessToken = "access-token",
             userId = "user-123",
             profile = sampleProfile(),
         )
@@ -112,6 +117,7 @@ class SupabaseClientTest {
         val client = buildClient(engine)
 
         val result = client.insertUserProfile(
+            accessToken = "access-token",
             userId = "user-123",
             profile = sampleProfile(),
         )
@@ -128,7 +134,9 @@ class SupabaseClientTest {
             httpClient = httpClient,
             config = SupabaseConfig(
                 url = "https://example.supabase.co",
-                serviceRoleKey = "service-role-key",
+                publishableKey = "publishable-key",
+                legacyAnonKey = null,
+                jwtVerificationMode = com.zenthek.config.SupabaseJwtVerificationMode.JWKS,
             ),
         )
     }

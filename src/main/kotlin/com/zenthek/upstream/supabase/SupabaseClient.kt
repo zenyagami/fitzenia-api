@@ -28,13 +28,13 @@ data class SupabaseAuthenticatedUser(
 )
 
 interface SupabaseGateway {
-    suspend fun validateAccessToken(accessToken: String): Result<SupabaseAuthenticatedUser>
-    suspend fun profileExists(userId: String): Result<Boolean>
-    suspend fun userGoalExists(userId: String): Result<Boolean>
-    suspend fun calorieTargetExists(userId: String): Result<Boolean>
-    suspend fun insertUserProfile(userId: String, profile: UserProfileEntity): Result<Unit>
-    suspend fun insertUserGoal(userId: String, userGoal: UserGoalEntity): Result<Unit>
-    suspend fun insertCalorieTarget(userId: String, calorieTarget: CalorieTargetEntity): Result<Unit>
+    suspend fun fetchAuthenticatedUser(accessToken: String): Result<SupabaseAuthenticatedUser>
+    suspend fun profileExists(accessToken: String, userId: String): Result<Boolean>
+    suspend fun userGoalExists(accessToken: String, userId: String): Result<Boolean>
+    suspend fun calorieTargetExists(accessToken: String, userId: String): Result<Boolean>
+    suspend fun insertUserProfile(accessToken: String, userId: String, profile: UserProfileEntity): Result<Unit>
+    suspend fun insertUserGoal(accessToken: String, userId: String, userGoal: UserGoalEntity): Result<Unit>
+    suspend fun insertCalorieTarget(accessToken: String, userId: String, calorieTarget: CalorieTargetEntity): Result<Unit>
 }
 
 class SupabaseClient(
@@ -45,11 +45,10 @@ class SupabaseClient(
 
     private val normalizedBaseUrl = config.url.trimEnd('/')
 
-    override suspend fun validateAccessToken(accessToken: String): Result<SupabaseAuthenticatedUser> = runCatching {
-        log.info("[SUPABASE] validating access token")
+    override suspend fun fetchAuthenticatedUser(accessToken: String): Result<SupabaseAuthenticatedUser> = runCatching {
+        log.info("[SUPABASE] fetching authenticated user")
         val response = httpClient.get("$normalizedBaseUrl/auth/v1/user") {
-            header("apikey", config.serviceRoleKey)
-            bearerAuth(accessToken)
+            applyUserScopedAuth(accessToken)
         }
         log.debug("[SUPABASE] auth validation status={}", response.status.value)
 
@@ -73,29 +72,31 @@ class SupabaseClient(
         SupabaseAuthenticatedUser(id = user.id, email = user.email)
     }
 
-    override suspend fun profileExists(userId: String): Result<Boolean> = existsInTable(
+    override suspend fun profileExists(accessToken: String, userId: String): Result<Boolean> = existsInTable(
         tableName = "user_profile",
+        accessToken = accessToken,
         userId = userId,
         label = "profile"
     )
 
-    override suspend fun userGoalExists(userId: String): Result<Boolean> = existsInTable(
+    override suspend fun userGoalExists(accessToken: String, userId: String): Result<Boolean> = existsInTable(
         tableName = "user_goal",
+        accessToken = accessToken,
         userId = userId,
         label = "goal"
     )
 
-    override suspend fun calorieTargetExists(userId: String): Result<Boolean> = existsInTable(
+    override suspend fun calorieTargetExists(accessToken: String, userId: String): Result<Boolean> = existsInTable(
         tableName = "calorie_target",
+        accessToken = accessToken,
         userId = userId,
         label = "calorie_target"
     )
 
-    override suspend fun insertUserProfile(userId: String, profile: UserProfileEntity): Result<Unit> = runCatching {
+    override suspend fun insertUserProfile(accessToken: String, userId: String, profile: UserProfileEntity): Result<Unit> = runCatching {
         log.info("[SUPABASE] inserting user_profile userId={} profileId={}", userId, profile.id)
         val response = httpClient.post("$normalizedBaseUrl/rest/v1/user_profile") {
-            header("apikey", config.serviceRoleKey)
-            bearerAuth(config.serviceRoleKey)
+            applyUserScopedAuth(accessToken)
             header(HttpHeaders.Prefer, "return=minimal")
             contentType(ContentType.Application.Json)
             setBody(profile.toInsertDto(userId))
@@ -113,11 +114,10 @@ class SupabaseClient(
         log.info("[SUPABASE] user_profile insert success userId={} profileId={}", userId, profile.id)
     }
 
-    override suspend fun insertUserGoal(userId: String, userGoal: UserGoalEntity): Result<Unit> = runCatching {
+    override suspend fun insertUserGoal(accessToken: String, userId: String, userGoal: UserGoalEntity): Result<Unit> = runCatching {
         log.info("[SUPABASE] inserting user_goal userId={} goalId={}", userId, userGoal.id)
         val response = httpClient.post("$normalizedBaseUrl/rest/v1/user_goal") {
-            header("apikey", config.serviceRoleKey)
-            bearerAuth(config.serviceRoleKey)
+            applyUserScopedAuth(accessToken)
             header(HttpHeaders.Prefer, "return=minimal")
             contentType(ContentType.Application.Json)
             setBody(userGoal.toInsertDto(userId))
@@ -135,11 +135,14 @@ class SupabaseClient(
         log.info("[SUPABASE] user_goal insert success userId={} goalId={}", userId, userGoal.id)
     }
 
-    override suspend fun insertCalorieTarget(userId: String, calorieTarget: CalorieTargetEntity): Result<Unit> = runCatching {
+    override suspend fun insertCalorieTarget(
+        accessToken: String,
+        userId: String,
+        calorieTarget: CalorieTargetEntity,
+    ): Result<Unit> = runCatching {
         log.info("[SUPABASE] inserting calorie_target userId={} calorieTargetId={}", userId, calorieTarget.id)
         val response = httpClient.post("$normalizedBaseUrl/rest/v1/calorie_target") {
-            header("apikey", config.serviceRoleKey)
-            bearerAuth(config.serviceRoleKey)
+            applyUserScopedAuth(accessToken)
             header(HttpHeaders.Prefer, "return=minimal")
             contentType(ContentType.Application.Json)
             setBody(calorieTarget.toInsertDto(userId))
@@ -157,11 +160,15 @@ class SupabaseClient(
         log.info("[SUPABASE] calorie_target insert success userId={} calorieTargetId={}", userId, calorieTarget.id)
     }
 
-    private suspend fun existsInTable(tableName: String, userId: String, label: String): Result<Boolean> = runCatching {
+    private suspend fun existsInTable(
+        tableName: String,
+        accessToken: String,
+        userId: String,
+        label: String,
+    ): Result<Boolean> = runCatching {
         log.info("[SUPABASE] checking {} for userId={}", tableName, userId)
         val response = httpClient.get("$normalizedBaseUrl/rest/v1/$tableName") {
-            header("apikey", config.serviceRoleKey)
-            bearerAuth(config.serviceRoleKey)
+            applyUserScopedAuth(accessToken)
             parameter("select", "id")
             parameter("user_id", "eq.$userId")
             parameter("limit", 1)
@@ -175,6 +182,11 @@ class SupabaseClient(
         val exists = response.body<List<SupabaseEntityIdDto>>().isNotEmpty()
         log.info("[SUPABASE] {} exists check userId={} exists={}", label, userId, exists)
         exists
+    }
+
+    private fun io.ktor.client.request.HttpRequestBuilder.applyUserScopedAuth(accessToken: String) {
+        header("apikey", config.publicApiKey)
+        bearerAuth(accessToken)
     }
 }
 

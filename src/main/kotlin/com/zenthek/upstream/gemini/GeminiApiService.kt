@@ -122,7 +122,7 @@ class GeminiApiService(
         log.info("Gemini generateContent response status=${response.status}")
 
         val responseText = response.bodyAsText()
-        log.debug("Gemini raw response: $responseText")
+        //log.debug("Gemini raw response: $responseText")
         val content = try {
             json.parseToJsonElement(responseText).jsonObject["candidates"]
                 ?.jsonArray?.firstOrNull()

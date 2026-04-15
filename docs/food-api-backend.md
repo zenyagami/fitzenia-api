@@ -15,9 +15,13 @@ The mobile app (Kotlin Multiplatform — Android + iOS) needs to search for food
 - Returns the merged, deduplicated list to the app
 
 **What this backend does NOT do (yet):**
-- Authentication (no auth for MVP — add later)
 - Caching (call upstream on every request — add later)
 - AI food photo recognition (separate concern)
+
+**Authentication:**
+- `/health` is public for probes
+- `/api/food/*` and `/api/user/*` require `Authorization: Bearer <Supabase access token>`
+- The backend validates Supabase JWTs against `SUPABASE_URL/auth/v1/.well-known/jwks.json`
 
 ---
 

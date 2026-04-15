@@ -1,5 +1,6 @@
 package com.zenthek.service
 
+import com.zenthek.auth.AuthenticatedUserContext
 import com.zenthek.model.CalorieTargetEntity
 import com.zenthek.model.RegisterCalorieTargetInput
 import com.zenthek.model.RegisterUserGoalInput
@@ -18,35 +19,36 @@ class UserProfileService(
 ) {
     private val log = LoggerFactory.getLogger(UserProfileService::class.java)
 
-    suspend fun registerIfAbsent(accessToken: String, request: RegisterUserRequest): RegisterUserResponse {
-        log.info("[USER] registerIfAbsent started")
-        val authenticatedUser = supabaseGateway.validateAccessToken(accessToken).getOrElse { error ->
-            throw mapTokenError(error)
-        }
-        log.info("[USER] token validated userId={}", authenticatedUser.id)
+    suspend fun registerIfAbsent(
+        authenticatedUser: AuthenticatedUserContext,
+        accessToken: String,
+        request: RegisterUserRequest,
+    ): RegisterUserResponse {
+        log.info("[USER] registerIfAbsent started userId={}", authenticatedUser.userId)
+        val authenticatedEmail = resolveAuthenticatedEmail(authenticatedUser, accessToken)
 
-        validateRegisterRequest(request, authenticatedUser.id, authenticatedUser.email)
-        log.info("[USER] payload validation passed userId={}", authenticatedUser.id)
+        validateRegisterRequest(request, authenticatedUser.userId, authenticatedEmail)
+        log.info("[USER] payload validation passed userId={}", authenticatedUser.userId)
 
-        val profileExists = supabaseGateway.profileExists(authenticatedUser.id).getOrElse { error ->
+        val profileExists = supabaseGateway.profileExists(accessToken, authenticatedUser.userId).getOrElse { error ->
             throw UpstreamFailureException("Unable to check user profile registration state: ${error.message}")
         }
-        val userGoalExists = supabaseGateway.userGoalExists(authenticatedUser.id).getOrElse { error ->
+        val userGoalExists = supabaseGateway.userGoalExists(accessToken, authenticatedUser.userId).getOrElse { error ->
             throw UpstreamFailureException("Unable to check user goal registration state: ${error.message}")
         }
-        val calorieTargetExists = supabaseGateway.calorieTargetExists(authenticatedUser.id).getOrElse { error ->
+        val calorieTargetExists = supabaseGateway.calorieTargetExists(accessToken, authenticatedUser.userId).getOrElse { error ->
             throw UpstreamFailureException("Unable to check calorie target registration state: ${error.message}")
         }
         log.info(
             "[USER] existing onboarding data userId={} profileExists={} userGoalExists={} calorieTargetExists={}",
-            authenticatedUser.id,
+            authenticatedUser.userId,
             profileExists,
             userGoalExists,
             calorieTargetExists
         )
 
         val now = System.currentTimeMillis()
-        val tokenEmail = authenticatedUser.email!!.trim()
+        val tokenEmail = authenticatedEmail.trim()
         val profileForInsert = request.userProfile.toServerProfile(tokenEmail, now)
         val userGoalForInsert = request.userGoal.toServerUserGoal(now)
         val calorieTargetForInsert = request.calorieTarget.toServerCalorieTarget(now)
@@ -54,44 +56,44 @@ class UserProfileService(
         var insertedAny = false
 
         if (!profileExists) {
-            log.info("[USER] creating profile for userId={} profileId={}", authenticatedUser.id, profileForInsert.id)
-            supabaseGateway.insertUserProfile(authenticatedUser.id, profileForInsert).getOrElse { error ->
+            log.info("[USER] creating profile for userId={} profileId={}", authenticatedUser.userId, profileForInsert.id)
+            supabaseGateway.insertUserProfile(accessToken, authenticatedUser.userId, profileForInsert).getOrElse { error ->
                 throw UpstreamFailureException("Unable to create user profile: ${error.message}")
             }
-            log.info("[USER] profile created userId={} profileId={}", authenticatedUser.id, profileForInsert.id)
+            log.info("[USER] profile created userId={} profileId={}", authenticatedUser.userId, profileForInsert.id)
             insertedAny = true
         } else {
-            log.info("[USER] profile already exists for userId={}, skipping insert", authenticatedUser.id)
+            log.info("[USER] profile already exists for userId={}, skipping insert", authenticatedUser.userId)
         }
 
         if (!userGoalExists) {
-            log.info("[USER] creating user_goal for userId={} goalId={}", authenticatedUser.id, userGoalForInsert.id)
-            supabaseGateway.insertUserGoal(authenticatedUser.id, userGoalForInsert).getOrElse { error ->
+            log.info("[USER] creating user_goal for userId={} goalId={}", authenticatedUser.userId, userGoalForInsert.id)
+            supabaseGateway.insertUserGoal(accessToken, authenticatedUser.userId, userGoalForInsert).getOrElse { error ->
                 throw UpstreamFailureException("Unable to create user goal: ${error.message}")
             }
-            log.info("[USER] user_goal created userId={} goalId={}", authenticatedUser.id, userGoalForInsert.id)
+            log.info("[USER] user_goal created userId={} goalId={}", authenticatedUser.userId, userGoalForInsert.id)
             insertedAny = true
         } else {
-            log.info("[USER] user_goal already exists for userId={}, skipping insert", authenticatedUser.id)
+            log.info("[USER] user_goal already exists for userId={}, skipping insert", authenticatedUser.userId)
         }
 
         if (!calorieTargetExists) {
             log.info(
                 "[USER] creating calorie_target for userId={} calorieTargetId={}",
-                authenticatedUser.id,
+                authenticatedUser.userId,
                 calorieTargetForInsert.id
             )
-            supabaseGateway.insertCalorieTarget(authenticatedUser.id, calorieTargetForInsert).getOrElse { error ->
+            supabaseGateway.insertCalorieTarget(accessToken, authenticatedUser.userId, calorieTargetForInsert).getOrElse { error ->
                 throw UpstreamFailureException("Unable to create calorie target: ${error.message}")
             }
             log.info(
                 "[USER] calorie_target created userId={} calorieTargetId={}",
-                authenticatedUser.id,
+                authenticatedUser.userId,
                 calorieTargetForInsert.id
             )
             insertedAny = true
         } else {
-            log.info("[USER] calorie_target already exists for userId={}, skipping insert", authenticatedUser.id)
+            log.info("[USER] calorie_target already exists for userId={}, skipping insert", authenticatedUser.userId)
         }
 
         return RegisterUserResponse(
@@ -100,17 +102,16 @@ class UserProfileService(
         )
     }
 
-    suspend fun getRegistrationStatus(accessToken: String): RegistrationStatusResponse {
-        log.info("[USER] getRegistrationStatus started")
-        val authenticatedUser = supabaseGateway.validateAccessToken(accessToken).getOrElse { error ->
-            throw mapTokenError(error)
-        }
-        log.info("[USER] token validated for registration-status userId={}", authenticatedUser.id)
+    suspend fun getRegistrationStatus(
+        authenticatedUser: AuthenticatedUserContext,
+        accessToken: String,
+    ): RegistrationStatusResponse {
+        log.info("[USER] getRegistrationStatus started userId={}", authenticatedUser.userId)
 
-        val profileExists = supabaseGateway.profileExists(authenticatedUser.id).getOrElse { error ->
+        val profileExists = supabaseGateway.profileExists(accessToken, authenticatedUser.userId).getOrElse { error ->
             throw UpstreamFailureException("Unable to read registration status: ${error.message}")
         }
-        log.info("[USER] registration-status resolved userId={} isRegistered={}", authenticatedUser.id, profileExists)
+        log.info("[USER] registration-status resolved userId={} isRegistered={}", authenticatedUser.userId, profileExists)
 
         return RegistrationStatusResponse(
             isSignedIn = true,
@@ -146,18 +147,37 @@ class UserProfileService(
         }
     }
 
-    private fun mapTokenError(error: Throwable): Throwable {
-        return when (error) {
-            is UnauthorizedException -> {
-                log.warn("[USER] token validation failed: {}", error.message)
-                error
-            }
+    private suspend fun resolveAuthenticatedEmail(
+        authenticatedUser: AuthenticatedUserContext,
+        accessToken: String,
+    ): String {
+        authenticatedUser.email?.trim()?.takeIf { it.isNotBlank() }?.let { return it }
 
-            else -> {
-                log.error("[USER] unexpected token validation failure", error)
-                UnauthorizedException("Invalid or expired access token")
+        log.info("[USER] JWT email missing, falling back to Supabase user lookup userId={}", authenticatedUser.userId)
+        val fetchedUser = supabaseGateway.fetchAuthenticatedUser(accessToken).getOrElse { error ->
+            when (error) {
+                is UnauthorizedException -> {
+                    log.warn("[USER] token validation failed during email fallback: {}", error.message)
+                    throw error
+                }
+
+                else -> {
+                    log.error("[USER] unexpected Supabase auth lookup failure", error)
+                    throw UpstreamFailureException("Unable to resolve authenticated user email")
+                }
             }
         }
+        if (fetchedUser.id != authenticatedUser.userId) {
+            log.warn(
+                "[USER] authenticated user mismatch between JWT and Supabase lookup jwtUserId={} supabaseUserId={}",
+                authenticatedUser.userId,
+                fetchedUser.id
+            )
+            throw UnauthorizedException("Invalid or expired access token")
+        }
+
+        return fetchedUser.email?.trim()?.takeIf { it.isNotBlank() }
+            ?: throw IllegalArgumentException("authenticated user email is required")
     }
 
     private fun RegisterUserProfileInput.toServerProfile(tokenEmail: String, now: Long): UserProfileEntity = UserProfileEntity(

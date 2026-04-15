@@ -40,7 +40,10 @@
       "Bash(./gradlew compileKotlin 2>&1 | tail -10)",
       "Bash(./gradlew compileKotlin 2>&1 | tail -8)",
       "Bash(./gradlew build:*)",
-      "Bash(./gradlew compileKotlin)"
+      "Bash(./gradlew compileKotlin)",
+      "Bash(./gradlew test:*)",
+      "mcp__context7__query-docs",
+      "Bash(cat build/test-results/test/*.xml)"
     ]
   }
 }

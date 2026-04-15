@@ -8,7 +8,7 @@ private fun env(key: String): String? = dotenv[key]
 data class AppConfig(
     val environment: AppEnvironment,
     val apiKeys: ApiKeys,
-    val useGemini: Boolean,
+    val useGeminiForAiImage: Boolean,
     val geminiApiKey: String,
     val supabase: SupabaseConfig,
 )
@@ -22,8 +22,31 @@ data class ApiKeys(
 
 data class SupabaseConfig(
     val url: String,
-    val serviceRoleKey: String,
-)
+    val publishableKey: String?,
+    val legacyAnonKey: String?,
+    val jwtVerificationMode: SupabaseJwtVerificationMode,
+) {
+    val normalizedUrl: String = url.trimEnd('/')
+    val issuer: String = "$normalizedUrl/auth/v1"
+    val jwksUrl: String = "$issuer/.well-known/jwks.json"
+    val publicApiKey: String = publishableKey?.trim().orEmpty()
+        .ifBlank { legacyAnonKey?.trim().orEmpty() }
+        .ifBlank { error("Missing SUPABASE_PUBLISHABLE_KEY (or temporary SUPABASE_ANON_KEY fallback)") }
+}
+
+enum class SupabaseJwtVerificationMode {
+    JWKS,
+    REMOTE;
+
+    companion object {
+        fun fromString(value: String?): SupabaseJwtVerificationMode {
+            return when (value?.trim()?.uppercase()) {
+                "REMOTE" -> REMOTE
+                else -> JWKS
+            }
+        }
+    }
+}
 
 
 enum class AppEnvironment {
@@ -39,6 +62,15 @@ enum class AppEnvironment {
                 else -> DEVELOPMENT
             }
         }
+    }
+}
+
+private fun parseUseGemini(value: String?): Boolean {
+    return when (value?.trim()?.lowercase()) {
+        null, "" -> true
+        "true", "1", "yes", "on" -> true
+        "false", "0", "no", "off" -> false
+        else -> true
     }
 }
 
@@ -61,11 +93,13 @@ object ConfigLoader {
                 usdaApiKey = env("USDA_API_KEY") ?: error("Missing USDA_API_KEY"),
                 openAiApiKey = env("OPENAI_API_KEY") ?: error("Missing OPENAI_API_KEY")
             ),
-            useGemini = true,
+            useGeminiForAiImage = parseUseGemini(env("USE_GEMINI")),
             geminiApiKey = env("GEMINI_API_KEY") ?: error("Missing GEMINI_API_KEY"),
             supabase = SupabaseConfig(
-                url = env("SUPABASE_DEV_URL") ?: error("Missing SUPABASE_URL"),
-                serviceRoleKey = env("SUPABASE_DEV_SERVICE_ROLE_KEY") ?: error("Missing SUPABASE_DEV_SERVICE_ROLE_KEY"),
+                url = env("SUPABASE_URL") ?: error("Missing SUPABASE_DEV_URL"),
+                publishableKey = env("SUPABASE_PUBLISHABLE_KEY"),
+                legacyAnonKey = env("SUPABASE_DEV_ANON_KEY"),
+                jwtVerificationMode = SupabaseJwtVerificationMode.fromString(env("SUPABASE_JWT_VERIFICATION_MODE")),
             ),
         )
     }
@@ -79,11 +113,13 @@ object ConfigLoader {
                 usdaApiKey = env("USDA_API_KEY") ?: error("Missing USDA_API_KEY"),
                 openAiApiKey = env("OPENAI_API_KEY") ?: error("Missing OPENAI_API_KEY")
             ),
-            useGemini = true,
+            useGeminiForAiImage = parseUseGemini(env("USE_GEMINI")),
             geminiApiKey = env("GEMINI_API_KEY") ?: error("Missing GEMINI_API_KEY"),
             supabase = SupabaseConfig(
                 url = env("SUPABASE_URL") ?: error("Missing SUPABASE_URL"),
-                serviceRoleKey = env("SUPABASE_SERVICE_ROLE_KEY") ?: error("Missing SUPABASE_SERVICE_ROLE_KEY"),
+                publishableKey = env("SUPABASE_PUBLISHABLE_KEY"),
+                legacyAnonKey = env("SUPABASE_ANON_KEY"),
+                jwtVerificationMode = SupabaseJwtVerificationMode.fromString(env("SUPABASE_JWT_VERIFICATION_MODE")),
             ),
         )
     }

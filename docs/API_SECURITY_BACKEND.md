@@ -248,7 +248,7 @@ When rotating keys, support two valid keys simultaneously for 30 days (old + new
 
 Supabase issues RS256-signed JWTs. The public keys are available at:
 ```
-https://<project-ref>.supabase.co/auth/v1/jwks
+https://<project-ref>.supabase.co/auth/v1/.well-known/jwks.json
 ```
 
 Standard JWT claims:
@@ -270,14 +270,18 @@ install(Authentication) {
     jwt("supabase-jwt") {
         realm = "fitzenio-api"
         verifier(
-            jwkProvider = JwkProviderBuilder(URL("https://<project-ref>.supabase.co/auth/v1/jwks"))
-                .cached(10, 24, TimeUnit.HOURS)
+            jwkProvider = JwkProviderBuilder(URL("https://<project-ref>.supabase.co/auth/v1/.well-known/jwks.json"))
+                .cached(10, 10, TimeUnit.MINUTES)
                 .rateLimited(10, 1, TimeUnit.MINUTES)
                 .build(),
             issuer = "https://<project-ref>.supabase.co/auth/v1"
         )
         validate { credential ->
-            if (credential.payload.getClaim("role").asString() == "authenticated") {
+            if (
+                credential.payload.subject.isNotBlank() &&
+                credential.payload.audience.contains("authenticated") &&
+                credential.payload.getClaim("role").asString() == "authenticated"
+            ) {
                 JWTPrincipal(credential.payload)
             } else null
         }
@@ -307,11 +311,13 @@ val userId = call.principal<JWTPrincipal>()?.payload?.subject
 ```
 
 ### JWKS caching
-The JWKS endpoint is called at most once per JWK key rotation (cached for 24h). This is safe — Supabase rotates keys rarely. The `rateLimited` builder prevents thundering-herd on cache miss.
+Keep the in-process JWKS cache short-lived (10 minutes or less) so key rotation is picked up quickly. The `rateLimited` builder prevents thundering-herd on cache miss.
 
-Add `SUPABASE_PROJECT_REF` to env vars:
+Derive issuer and JWKS URL from `SUPABASE_URL`:
 ```kotlin
-val supabaseProjectRef = env["SUPABASE_PROJECT_REF"] ?: error("SUPABASE_PROJECT_REF is required")
+val supabaseUrl = env["SUPABASE_URL"] ?: error("SUPABASE_URL is required")
+val issuer = "${supabaseUrl.trimEnd('/')}/auth/v1"
+val jwksUrl = "$issuer/.well-known/jwks.json"
 ```
 
 **File:** `src/main/kotlin/Application.kt`
@@ -475,7 +481,9 @@ Cloud Run forwards stdout to Cloud Logging automatically. The JSON format is par
 |---|---|---|---|
 | `APP_API_KEY` | Yes | Layer 3 | Shared app secret — validate `X-API-Key` header |
 | `APP_API_KEY_PREV` | No | Layer 3 | Previous key during rotation grace period |
-| `SUPABASE_PROJECT_REF` | Yes | Layer 4 | Supabase project reference (for JWKS URL) |
+| `SUPABASE_URL` | Yes | Layer 4 | Supabase project base URL; derive issuer and JWKS URL from it |
+| `SUPABASE_PUBLISHABLE_KEY` | Yes | Layer 4 | Public API key used with user JWT for RLS-enforced Supabase requests |
+| `SUPABASE_ANON_KEY` | No | Layer 4 | Temporary legacy fallback only while migrating older Supabase API keys |
 | `INTEGRITY_JWT_SECRET` | Yes | Layer 5 | HMAC secret for signing integrity session tokens |
 | `GOOGLE_APPLICATION_CREDENTIALS` | Yes (Layer 5) | Layer 5 | Path to service account key for Play Integrity API |
 | `INTEGRITY_DRY_RUN` | No (default `true`) | Layer 5 | When `true`, log integrity failures but always grant access (Dry Run Mode) |
@@ -502,7 +510,7 @@ Add all to Cloud Secret Manager and reference in `cloud-run-config.yaml`.
 ## What NOT to do
 
 - **Do not use `ktor-server-auth` with HTTP Basic** — it does not fit the mobile app model
-- **Do not validate JWTs with the Supabase service role key** — use the public JWKS endpoint; never put the service role key on the backend
+- **Do not validate JWTs with the Supabase service role key** — use the public JWKS endpoint, and keep `service_role` out of normal user-scoped request paths
 - **Do not log full request bodies** — they may contain base64 image data or user credentials
 - **Do not return stack traces to clients** — `StatusPages` already prevents this; do not add any `cause.stackTrace` to error responses
 - **Do not block users on integrity check failure from day 1** — log first, enforce later after validating the false-positive rate
