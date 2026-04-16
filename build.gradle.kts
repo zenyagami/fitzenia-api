@@ -18,7 +18,7 @@ application {
 ktor {
     docker {
         jreVersion = JavaVersion.VERSION_21
-        localImageName = "fitzenio-api"
+        localImageName = "fitzenia-api"
     }
 }
 
@@ -35,9 +35,9 @@ configure<com.google.cloud.tools.jib.gradle.JibExtension> {
     }
     to {
         image = if (project.hasProperty("prod")) {
-            "gcr.io/fitzenio/fitzenio-api-prod"
+            "gcr.io/fitzenio/fitzenia-api-prod"
         } else {
-            "gcr.io/fitzenio-debug/fitzenio-api-dev"
+            "gcr.io/fitzenio-debug/fitzenia-api-dev"
         }
         tags = setOf("latest", System.getenv("TIMESTAMP") ?: System.currentTimeMillis().toString())
     }

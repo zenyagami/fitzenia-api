@@ -1,23 +1,35 @@
 package com.zenthek.routes
 
+import com.zenthek.ai.AiClassifyInput
+import com.zenthek.ai.AiClassifyResult
+import com.zenthek.ai.AiGenerateInput
+import com.zenthek.ai.AiGenerateResult
+import com.zenthek.ai.AiSearchClient
+import com.zenthek.ai.ClassifyDecision
 import com.zenthek.auth.TestJwksServer
 import com.zenthek.auth.configureAuthentication
 import com.zenthek.auth.createSupabaseAccessToken
 import com.zenthek.auth.createTestSupabaseConfig
 import com.zenthek.auth.generateTestRsaKeyPair
 import com.zenthek.config.ApiKeys
+import com.zenthek.config.SmartSearchConfig
 import com.zenthek.fitzenio.rest.configureRateLimit
 import com.zenthek.fitzenio.rest.configureSerialization
 import com.zenthek.fitzenio.rest.configureStatusPages
+import com.zenthek.model.CanonicalEquivalentCandidate
+import com.zenthek.model.CanonicalFoodEntity
+import com.zenthek.model.CanonicalQueryMapRow
 import com.zenthek.model.ImageAnalysisResponse
 import com.zenthek.model.ImageAnalyzer
-import com.zenthek.model.RegisterUserRequest
-import com.zenthek.model.SearchResponse
+import com.zenthek.model.InsertCanonicalFoodsPayload
+import com.zenthek.model.InsertCanonicalFoodsResult
 import com.zenthek.service.FoodService
+import com.zenthek.service.SmartSearchOrchestrator
 import com.zenthek.service.UserProfileService
 import com.zenthek.upstream.fatsecret.FatSecretClient
 import com.zenthek.upstream.fatsecret.FatSecretTokenManager
 import com.zenthek.upstream.openfoodfacts.OpenFoodFactsClient
+import com.zenthek.upstream.supabase.CanonicalCatalogGateway
 import com.zenthek.upstream.supabase.SupabaseAuthenticatedUser
 import com.zenthek.upstream.supabase.SupabaseGateway
 import com.zenthek.upstream.usda.UsdaClient
@@ -138,6 +150,7 @@ class ProtectedRoutesAuthTest {
             configureAuthentication(createTestSupabaseConfig(baseUrl), gateway)
             configureRouting(
                 foodService = buildFoodService(),
+                smartSearch = buildSmartSearch(),
                 imageAnalyzer = ImageAnalyzer { _, _, _, _, _ ->
                     ImageAnalysisResponse(
                         items = emptyList(),
@@ -163,12 +176,59 @@ class ProtectedRoutesAuthTest {
             fatSecretClientSecret = "client-secret",
             usdaApiKey = "usda-key",
             openAiApiKey = "openai-key",
+            supabaseServiceRoleKey = null,
         )
         val offClient = OpenFoodFactsClient(httpClient)
         val tokenManager = FatSecretTokenManager(httpClient, apiKeys)
         val fsClient = FatSecretClient(httpClient, tokenManager)
         val usdaClient = UsdaClient(httpClient, apiKeys.usdaApiKey)
         return FoodService(offClient, fsClient, usdaClient)
+    }
+
+    /**
+     * Minimal SmartSearchOrchestrator for auth tests. The handler is only reached
+     * when auth FAILS (in which case search never runs) or in tests that do not
+     * exercise /api/food/search — so stub collaborators throw if anyone actually
+     * calls them. Flag is disabled so the orchestrator also won't touch catalog/AI
+     * even if invoked.
+     */
+    private fun buildSmartSearch(): SmartSearchOrchestrator {
+        val stubCatalog = object : CanonicalCatalogGateway {
+            override suspend fun lookupQueryMappings(
+                normalizedQuery: String, locale: String, country: String
+            ): Result<List<CanonicalQueryMapRow>> = error("catalog not expected in auth tests")
+            override suspend fun readCanonicals(ids: List<String>): Result<List<CanonicalFoodEntity>> =
+                error("catalog not expected in auth tests")
+            override suspend fun insertCanonicalFoods(
+                payload: InsertCanonicalFoodsPayload
+            ): Result<InsertCanonicalFoodsResult> = error("catalog not expected in auth tests")
+            override suspend fun findEquivalentCanonicalCandidates(
+                englishLikeName: String, limit: Int
+            ): Result<List<CanonicalEquivalentCandidate>> = error("catalog not expected in auth tests")
+        }
+        val stubAi = object : AiSearchClient {
+            override suspend fun classify(input: AiClassifyInput): AiClassifyResult =
+                AiClassifyResult(ClassifyDecision.MATCH_EXISTING, emptyList(), 0f)
+            override suspend fun generate(input: AiGenerateInput): AiGenerateResult =
+                AiGenerateResult(emptyList())
+        }
+        return SmartSearchOrchestrator(
+            offSearch = { _, _, _, _, _ -> error("upstream not expected in auth tests") },
+            usdaSearch = { _, _, _, _, _ -> error("upstream not expected in auth tests") },
+            catalog = stubCatalog,
+            ai = stubAi,
+            config = SmartSearchConfig(
+                enabled = false,
+                usdaEnabled = false,
+                aiRankModel = "stub",
+                aiGenerateModel = "stub",
+                aiClassifyTimeoutMs = 3000L,
+                aiGenerateTimeoutMs = 8000L,
+                aiSyncOnMiss = true,
+                catalogWriteConfidenceThreshold = 0.7f,
+            ),
+            backgroundScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob())
+        )
     }
 
     private fun protectedRequests(): List<ProtectedRequest> {

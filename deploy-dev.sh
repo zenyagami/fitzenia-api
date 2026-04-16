@@ -8,7 +8,7 @@ set -e  # Exit on any error
 # Configuration
 PROJECT_ID="fitzenio-debug"
 REGION="europe-north1"
-SERVICE_NAME="fitzenio-api-dev"
+SERVICE_NAME="fitzenia-api-dev"
 IMAGE_NAME="gcr.io/$PROJECT_ID/$SERVICE_NAME"
 
 # Colors for output
@@ -41,7 +41,7 @@ if [ -z "$PROJECT_ID" ]; then
     exit 1
 fi
 
-print_status "Starting DEVELOPMENT deployment for Fitzenio API..."
+print_status "Starting DEVELOPMENT deployment for Fitzenia API..."
 print_status "Project ID: $PROJECT_ID"
 print_status "Region: $REGION"
 print_status "Service Name: $SERVICE_NAME"
@@ -68,6 +68,7 @@ sed -e "s|gcr.io/PROJECT_ID/|gcr.io/$PROJECT_ID/|g" \
 
 gcloud run services replace cloud-run-config-dev-deployed.yaml \
     --platform managed \
+    --region $REGION \
     --project $PROJECT_ID
 
 # Clean up temporary config file
@@ -90,7 +91,7 @@ else
 fi
 
 print_warning "Development Configuration:"
-print_warning "- Firebase Project: autozendebug-11b43"
+print_warning "- Firebase Project: fitzenia-dev"
 print_warning "- Google Play Debug Mode: ENABLED"
 print_warning "- Resource Limits: 0.5 CPU, 512Mi Memory"
 print_warning "- Max Scale: 3 instances"

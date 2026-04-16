@@ -11,13 +11,26 @@ data class AppConfig(
     val useGeminiForAiImage: Boolean,
     val geminiApiKey: String,
     val supabase: SupabaseConfig,
+    val smartSearch: SmartSearchConfig,
 )
 
 data class ApiKeys(
     val fatSecretClientId: String,
     val fatSecretClientSecret: String,
     val usdaApiKey: String,
-    val openAiApiKey: String
+    val openAiApiKey: String,
+    val supabaseServiceRoleKey: String?     // Required when SmartSearchConfig.enabled = true; validated at startup
+)
+
+data class SmartSearchConfig(
+    val enabled: Boolean,                        // SMART_FOOD_SEARCH_ENABLED
+    val usdaEnabled: Boolean,                    // SMART_SEARCH_USDA_ENABLED (kill switch)
+    val aiRankModel: String,                     // AI_SEARCH_RANK_MODEL (Gemini classify/rank)
+    val aiGenerateModel: String,                 // AI_SEARCH_GENERATE_MODEL (Gemini grounded generation)
+    val aiClassifyTimeoutMs: Long,               // AI_SEARCH_CLASSIFY_TIMEOUT_MS
+    val aiGenerateTimeoutMs: Long,               // AI_SEARCH_GENERATE_TIMEOUT_MS
+    val aiSyncOnMiss: Boolean,                   // SMART_SEARCH_AI_SYNC_ON_MISS (false = async write-behind)
+    val catalogWriteConfidenceThreshold: Float   // CATALOG_WRITE_CONFIDENCE_THRESHOLD
 )
 
 data class SupabaseConfig(
@@ -74,6 +87,37 @@ private fun parseUseGemini(value: String?): Boolean {
     }
 }
 
+private fun parseBoolFlag(value: String?, default: Boolean): Boolean {
+    return when (value?.trim()?.lowercase()) {
+        null, "" -> default
+        "true", "1", "yes", "on" -> true
+        "false", "0", "no", "off" -> false
+        else -> default
+    }
+}
+
+private fun loadSmartSearchConfig(): SmartSearchConfig {
+    val enabled = parseBoolFlag(env("SMART_FOOD_SEARCH_ENABLED"), default = false)
+    return SmartSearchConfig(
+        enabled = enabled,
+        usdaEnabled = parseBoolFlag(env("SMART_SEARCH_USDA_ENABLED"), default = true),
+        aiRankModel = env("AI_SEARCH_RANK_MODEL")?.trim()?.ifBlank { null } ?: "gemini-2.5-flash-lite",
+        aiGenerateModel = env("AI_SEARCH_GENERATE_MODEL")?.trim()?.ifBlank { null } ?: "gemini-2.5-flash",
+        aiClassifyTimeoutMs = env("AI_SEARCH_CLASSIFY_TIMEOUT_MS")?.trim()?.toLongOrNull() ?: 3_000L,
+        aiGenerateTimeoutMs = env("AI_SEARCH_GENERATE_TIMEOUT_MS")?.trim()?.toLongOrNull() ?: 8_000L,
+        aiSyncOnMiss = parseBoolFlag(env("SMART_SEARCH_AI_SYNC_ON_MISS"), default = false),
+        catalogWriteConfidenceThreshold = env("CATALOG_WRITE_CONFIDENCE_THRESHOLD")?.trim()?.toFloatOrNull() ?: 0.7f,
+    )
+}
+
+private fun loadSupabaseServiceRoleKey(smartSearchEnabled: Boolean): String? {
+    val key = env("SUPABASE_SERVICE_ROLE_KEY")?.trim()?.ifBlank { null }
+    if (smartSearchEnabled && key == null) {
+        error("Missing SUPABASE_SERVICE_ROLE_KEY (required when SMART_FOOD_SEARCH_ENABLED=true)")
+    }
+    return key
+}
+
 object ConfigLoader {
     fun loadConfig(): AppConfig {
         val environment = AppEnvironment.fromString(env("APP_ENVIRONMENT"))
@@ -85,13 +129,15 @@ object ConfigLoader {
     }
 
     private fun createDevelopmentConfig(): AppConfig {
+        val smartSearch = loadSmartSearchConfig()
         return AppConfig(
             environment = AppEnvironment.DEVELOPMENT,
             apiKeys = ApiKeys(
                 fatSecretClientId = env("FATSECRET_CLIENT_ID") ?: error("Missing FATSECRET_CLIENT_ID"),
                 fatSecretClientSecret = env("FATSECRET_CLIENT_SECRET") ?: error("Missing FATSECRET_CLIENT_SECRET"),
                 usdaApiKey = env("USDA_API_KEY") ?: error("Missing USDA_API_KEY"),
-                openAiApiKey = env("OPENAI_API_KEY") ?: error("Missing OPENAI_API_KEY")
+                openAiApiKey = env("OPENAI_API_KEY") ?: error("Missing OPENAI_API_KEY"),
+                supabaseServiceRoleKey = loadSupabaseServiceRoleKey(smartSearch.enabled),
             ),
             useGeminiForAiImage = parseUseGemini(env("USE_GEMINI")),
             geminiApiKey = env("GEMINI_API_KEY") ?: error("Missing GEMINI_API_KEY"),
@@ -101,17 +147,20 @@ object ConfigLoader {
                 legacyAnonKey = env("SUPABASE_DEV_ANON_KEY"),
                 jwtVerificationMode = SupabaseJwtVerificationMode.fromString(env("SUPABASE_JWT_VERIFICATION_MODE")),
             ),
+            smartSearch = smartSearch,
         )
     }
 
     private fun createProductionConfig(): AppConfig {
+        val smartSearch = loadSmartSearchConfig()
         return AppConfig(
             environment = AppEnvironment.PRODUCTION,
             apiKeys = ApiKeys(
                 fatSecretClientId = env("FATSECRET_CLIENT_ID") ?: error("Missing FATSECRET_CLIENT_ID"),
                 fatSecretClientSecret = env("FATSECRET_CLIENT_SECRET") ?: error("Missing FATSECRET_CLIENT_SECRET"),
                 usdaApiKey = env("USDA_API_KEY") ?: error("Missing USDA_API_KEY"),
-                openAiApiKey = env("OPENAI_API_KEY") ?: error("Missing OPENAI_API_KEY")
+                openAiApiKey = env("OPENAI_API_KEY") ?: error("Missing OPENAI_API_KEY"),
+                supabaseServiceRoleKey = loadSupabaseServiceRoleKey(smartSearch.enabled),
             ),
             useGeminiForAiImage = parseUseGemini(env("USE_GEMINI")),
             geminiApiKey = env("GEMINI_API_KEY") ?: error("Missing GEMINI_API_KEY"),
@@ -121,6 +170,7 @@ object ConfigLoader {
                 legacyAnonKey = env("SUPABASE_ANON_KEY"),
                 jwtVerificationMode = SupabaseJwtVerificationMode.fromString(env("SUPABASE_JWT_VERIFICATION_MODE")),
             ),
+            smartSearch = smartSearch,
         )
     }
 }

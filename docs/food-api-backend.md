@@ -1,6 +1,6 @@
 # Food API Backend — Implementation Spec
 
-> **Purpose of this document:** This is a complete implementation spec for an AI coding agent (Claude or Gemini) to build a Ktor JVM backend that proxies food database lookups on behalf of the Fitzenio mobile app. Read every section before writing any code.
+> **Purpose of this document:** This is a complete implementation spec for an AI coding agent (Claude or Gemini) to build a Ktor JVM backend that proxies food database lookups on behalf of the fitzenia mobile app. Read every section before writing any code.
 
 ---
 
@@ -227,7 +227,7 @@ data class ApiError(
 ### Authentication
 None required. Add a `User-Agent` header to be a good API citizen:
 ```
-User-Agent: Fitzenio/1.0 (Android/iOS app; contact@fitzenio.com)
+User-Agent: fitzenia/1.0 (Android/iOS app; contact@fitzenia.com)
 ```
 
 ### Rate limit
@@ -892,7 +892,7 @@ if (query.isBlank()) throw IllegalArgumentException("Parameter 'q' must not be b
 ktor:
   application:
     modules:
-      - com.zenthek.foodapi.ApplicationKt.module
+      - com.zenthek.fitzenio.rest.ApplicationKt.module
   deployment:
     port: ${PORT:8080}
     watch:

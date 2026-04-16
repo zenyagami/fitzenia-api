@@ -4,8 +4,8 @@
 
 | Environment | GCP Project | Cloud Run Service | Config file | Deploy script |
 |---|---|---|---|---|
-| Dev | `fitzenio-debug` | `fitzenio-api-dev` | `cloud-run-config.dev.yaml` | `./deploy-dev.sh` |
-| Production | `fitzenio` | `fitzenio-api-prod` | `cloud-run-config.yaml` | `./deploy.sh` |
+| Dev | `fitzenio-debug` | `fitzenia-api-dev` | `cloud-run-config.dev.yaml` | `./deploy-dev.sh` |
+| Production | `fitzenio` | `fitzenia-api-prod` | `cloud-run-config.yaml` | `./deploy.sh` |
 
 Secrets are stored in **Secret Manager** in each GCP project and referenced by name in the YAML config.
 The Cloud Run service account must have `roles/secretmanager.secretAccessor` for each secret it reads.
@@ -15,6 +15,13 @@ The Cloud Run service account must have `roles/secretmanager.secretAccessor` for
 ## Regular deploy
 
 ```bash
+# Optional safety check:
+./check-cloud-run-env.sh all .env.example
+
+# Optional but recommended before deploy:
+ENV_FILE=.env.dev ./sync-secrets.sh dev
+ENV_FILE=.env.prod ./sync-secrets.sh prod
+
 # Dev
 ./deploy-dev.sh
 
@@ -33,48 +40,7 @@ Both scripts: build with Jib → push image to GCR → `gcloud run services repl
 
 Do this checklist for **each environment** you're adding the key to.
 
-### Step 1 — Create the secret in Secret Manager
-
-```bash
-# Dev (fitzenio-debug)
-echo -n "your-actual-key-value" | gcloud secrets create MY_NEW_KEY \
-  --data-file=- \
-  --project=fitzenio-debug
-
-# Production (fitzenio)
-echo -n "your-actual-key-value" | gcloud secrets create MY_NEW_KEY \
-  --data-file=- \
-  --project=fitzenio
-```
-
-To update an existing secret's value (add a new version):
-```bash
-echo -n "new-value" | gcloud secrets versions add MY_NEW_KEY \
-  --data-file=- \
-  --project=fitzenio-debug
-```
-
-### Step 2 — Grant the service account access
-
-Edit `grant-secrets.sh` and add one line per new secret:
-```bash
-gcloud secrets add-iam-policy-binding MY_NEW_KEY \
-  --member="$SA" \
-  --role="roles/secretmanager.secretAccessor" \
-  --project="$PROJECT"
-```
-
-> `grant-secrets.sh` currently targets `fitzenio-debug` (dev). For production, run the equivalent
-> command manually with `--project=fitzenio` and the prod service account (see below).
-
-Then run:
-```bash
-./grant-secrets.sh
-```
-
-> Safe to re-run — IAM bindings are idempotent.
-
-### Step 3 — Add the env entry to the Cloud Run YAML
+### Step 1 — Add the env entry to the Cloud Run YAML
 
 **Dev** (`cloud-run-config.dev.yaml`):
 ```yaml
@@ -93,13 +59,73 @@ For plain (non-secret) env vars:
   value: "true"
 ```
 
-### Step 4 — Add to `.env.example`
+### Step 2 — Add the value to your local env file
+
+Put the real value in the local file for that environment:
+
+```bash
+# Dev
+cp .env.example .env.dev
+
+# Production
+cp .env.example .env.prod
+```
+
+Then add:
+
+```bash
+MY_NEW_KEY=your_actual_value
+```
+
+### Step 3 — Add to `.env.example`
 
 ```
 MY_NEW_KEY=your_value_here
 ```
 
-### Step 5 — Deploy
+### Step 4 — Validate env vs Cloud Run YAML
+
+```bash
+./check-cloud-run-env.sh all .env.example
+```
+
+For environment-specific files:
+
+```bash
+./check-cloud-run-env.sh dev .env.dev
+./check-cloud-run-env.sh prod .env.prod
+```
+
+By default the script ignores `PORT`, since Cloud Run injects that automatically.
+You can ignore extra local-only keys like this:
+
+```bash
+IGNORE_KEYS=PORT,MY_LOCAL_ONLY_KEY ./check-cloud-run-env.sh
+```
+
+### Step 5 — Sync secrets and IAM
+
+```bash
+# Dev
+ENV_FILE=.env.dev ./sync-secrets.sh dev
+
+# Production
+ENV_FILE=.env.prod ./sync-secrets.sh prod
+```
+
+This script now does both jobs:
+- creates the secret if it does not exist
+- adds a new secret version if it already exists
+- grants the Cloud Run compute service account `roles/secretmanager.secretAccessor`
+
+If you only need to re-grant IAM access without changing values:
+
+```bash
+./grant-secrets.sh dev
+./grant-secrets.sh prod
+```
+
+### Step 6 — Deploy
 
 ```bash
 ./deploy-dev.sh   # dev
@@ -117,6 +143,9 @@ MY_NEW_KEY=your_value_here
 | `USDA_API_KEY` | yes | yes |
 | `OPENAI_API_KEY` | yes | yes |
 | `GEMINI_API_KEY` | yes | yes |
+| `SUPABASE_URL` | yes | yes |
+| `SUPABASE_PUBLISHABLE_KEY` | yes | yes |
+| `SUPABASE_SERVICE_ROLE_KEY` | yes | yes |
 
 ---
 
@@ -133,25 +162,13 @@ gcloud auth configure-docker
 gcloud services enable run.googleapis.com secretmanager.googleapis.com \
   containerregistry.googleapis.com --project=fitzenio
 
-# 3. Create all secrets (run once per secret)
-echo -n "VALUE" | gcloud secrets create FATSECRET_CLIENT_ID   --data-file=- --project=fitzenio
-echo -n "VALUE" | gcloud secrets create FATSECRET_CLIENT_SECRET --data-file=- --project=fitzenio
-echo -n "VALUE" | gcloud secrets create USDA_API_KEY           --data-file=- --project=fitzenio
-echo -n "VALUE" | gcloud secrets create OPENAI_API_KEY         --data-file=- --project=fitzenio
-echo -n "VALUE" | gcloud secrets create GEMINI_API_KEY         --data-file=- --project=fitzenio
+# 3. Prepare your local env file with prod values
+cp .env.example .env.prod
 
-# 4. Find the production compute service account
-gcloud iam service-accounts list --project=fitzenio
-# Typically: <project-number>-compute@developer.gserviceaccount.com
+# 4. Sync secrets + IAM grants
+ENV_FILE=.env.prod ./sync-secrets.sh prod
 
-# 5. Grant secret access (replace SA with the account found above)
-SA="serviceAccount:PROD_SA@developer.gserviceaccount.com"
-for SECRET in FATSECRET_CLIENT_ID FATSECRET_CLIENT_SECRET USDA_API_KEY OPENAI_API_KEY GEMINI_API_KEY; do
-  gcloud secrets add-iam-policy-binding $SECRET \
-    --member="$SA" --role="roles/secretmanager.secretAccessor" --project=fitzenio
-done
-
-# 6. Deploy
+# 5. Deploy
 ./deploy.sh
 ```
 
@@ -160,7 +177,7 @@ done
 ## Troubleshooting
 
 **Service crashes on startup with `Missing GEMINI_API_KEY` (or similar)**
-- The secret exists in Secret Manager but the service account doesn't have access → run the IAM grant step
+- The secret exists in Secret Manager but the service account doesn't have access → run `./grant-secrets.sh dev` or `./grant-secrets.sh prod`
 - The env entry is missing from the YAML → add it and redeploy (manual Console edits are overwritten on deploy)
 
 **`gcloud run services replace` fails with permission error**
