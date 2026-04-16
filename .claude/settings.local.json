@@ -43,7 +43,27 @@
       "Bash(./gradlew compileKotlin)",
       "Bash(./gradlew test:*)",
       "mcp__context7__query-docs",
-      "Bash(cat build/test-results/test/*.xml)"
+      "Bash(cat build/test-results/test/*.xml)",
+      "mcp__context7__resolve-library-id",
+      "Bash(./gradlew compileKotlin compileTestKotlin)",
+      "Bash(./gradlew compileTestKotlin)",
+      "Bash(awk '{t+=$1; f+=$2; e+=$3; printf \"%-3s %s\\\\n\", $1, $4} END {print \"---\"; print \"Total: \" t \" tests, \" f \" failures, \" e \" errors\"}')",
+      "Bash(awk -F'tests=\"' '{gsub\\(/\".*/, \"\", $2\\); t+=$2} END {print \"\\\\nTotal tests:\", t}')",
+      "mcp__supabase__get_project_url",
+      "mcp__supabase__list_tables",
+      "mcp__supabase__list_migrations",
+      "mcp__supabase__list_extensions",
+      "mcp__supabase__apply_migration",
+      "mcp__supabase__get_advisors",
+      "mcp__supabase__execute_sql",
+      "Bash(\\\\grep -c \"^}\" /Users/zenkun/Documents/IntelliJProjects/Fitzenia-api/src/main/kotlin/com/zenthek/routes/Routing.kt)",
+      "Bash(./gradlew compileKotlin compileTestKotlin test)",
+      "Bash(./gradlew compileKotlin test)",
+      "Bash(./gradlew compileTestKotlin test)"
     ]
-  }
+  },
+  "enableAllProjectMcpServers": true,
+  "enabledMcpjsonServers": [
+    "supabase"
+  ]
 }

@@ -367,6 +367,11 @@ Secrets are managed via Google Cloud Secret Manager (`grant-secrets.sh` sets IAM
 
 ## Testing conventions
 
+> **Do not write new tests (unit, integration, route, or otherwise) unless the user explicitly asks.**
+> The conventions below describe the STYLE to follow when tests are explicitly requested.
+> Default workflow: skip the test-writing step. Validate changes via `./gradlew compileKotlin compileTestKotlin` and running the existing test suite (`./gradlew test`) to catch regressions — do not add new coverage proactively.
+> If you believe a specific test is essential for correctness, mention it as a suggestion in chat; do not write it.
+
 ### Mapper unit tests
 
 Test each mapper in isolation with hardcoded DTO fixture data. No network required.

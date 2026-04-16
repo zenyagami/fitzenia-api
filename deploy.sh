@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Fitzenio API - Google Cloud Run PRODUCTION Deployment Script
+# fitzenia API - Google Cloud Run PRODUCTION Deployment Script
 # This script automates the deployment process
 
 set -e  # Exit on any error
@@ -8,7 +8,7 @@ set -e  # Exit on any error
 # Configuration
 PROJECT_ID="fitzenio"
 REGION="europe-north1"
-SERVICE_NAME="fitzenio-api-prod"
+SERVICE_NAME="fitzenia-api-prod"
 IMAGE_NAME="gcr.io/$PROJECT_ID/$SERVICE_NAME"
 
 # Colors for output
@@ -41,7 +41,7 @@ if [ -z "$PROJECT_ID" ]; then
     exit 1
 fi
 
-print_status "Starting PRODUCTION deployment for Fitzenio API..."
+print_status "Starting PRODUCTION deployment for Fitzenia API..."
 print_warning "This is a PRODUCTION deployment!"
 print_status "Project ID: $PROJECT_ID"
 print_status "Region: $REGION"

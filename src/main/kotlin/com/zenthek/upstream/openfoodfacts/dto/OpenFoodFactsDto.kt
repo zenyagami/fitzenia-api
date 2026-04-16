@@ -39,7 +39,11 @@ data class OpenFoodFactsV3SearchProduct(
     @SerialName("serving_size") val servingSize: String? = null,
     @SerialName("serving_quantity") val servingQuantity: Float? = null,
     @SerialName("image_url") val imageUrl: String? = null,
-    val nutriments: OpenFoodFactsNutriments? = null
+    val nutriments: OpenFoodFactsNutriments? = null,
+    // OFF returns tags like ["en:france", "en:germany"] indicating markets the
+    // product is sold in. The OFF client re-ranks hits so items matching the
+    // user's country come first, preserving original order within each bucket.
+    @SerialName("countries_tags") val countriesTags: List<String>? = null
 )
 
 @Serializable
@@ -51,5 +55,11 @@ data class OpenFoodFactsNutriments(
     @SerialName("fat_100g") val fat100g: Float? = null,
     @SerialName("saturated-fat_100g") val saturatedFat100g: Float? = null,
     @SerialName("fiber_100g") val fiber100g: Float? = null,
-    @SerialName("sodium_100g") val sodium100g: Float? = null
+    @SerialName("sodium_100g") val sodium100g: Float? = null,
+    // OFF reports minerals per 100g as grams (so potassium_100g = 0.3 → 300mg).
+    // Mapper converts to mg for cholesterol/potassium/calcium/iron.
+    @SerialName("cholesterol_100g") val cholesterol100g: Float? = null,
+    @SerialName("potassium_100g") val potassium100g: Float? = null,
+    @SerialName("calcium_100g") val calcium100g: Float? = null,
+    @SerialName("iron_100g") val iron100g: Float? = null
 )

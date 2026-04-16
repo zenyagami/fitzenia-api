@@ -2,7 +2,9 @@ package com.zenthek.mapper
 
 import com.zenthek.model.FoodItem
 import com.zenthek.model.FoodSource
+import com.zenthek.model.InternalFoodItem
 import com.zenthek.model.NutritionInfo
+import com.zenthek.model.ResultKind
 import com.zenthek.model.ServingSize
 import com.zenthek.upstream.openfoodfacts.dto.OpenFoodFactsNutriments
 import com.zenthek.upstream.openfoodfacts.dto.OpenFoodFactsProduct
@@ -60,7 +62,20 @@ object OpenFoodFactsMapper {
         )
     }
 
+    /**
+     * Same as [mapV3Search] but wraps the result with [ResultKind]. OFF is a
+     * branded-products database, so every item is classified BRANDED here.
+     * Any promotion to GENERIC (exact query match with no brand) happens in
+     * the orchestrator, which has access to the query. Do not add query-aware
+     * logic in this mapper.
+     */
+    internal fun mapV3SearchWithKind(product: OpenFoodFactsV3SearchProduct): InternalFoodItem? {
+        val foodItem = mapV3Search(product) ?: return null
+        return InternalFoodItem(foodItem, ResultKind.BRANDED)
+    }
+
     private fun extractNutrition(nutriments: OpenFoodFactsNutriments?): NutritionInfo {
+        // OFF reports minerals per 100g as grams; convert to mg.
         return NutritionInfo(
             caloriesKcal = nutriments?.energyKcal100g ?: 0f,
             proteinG = nutriments?.proteins100g ?: 0f,
@@ -69,7 +84,11 @@ object OpenFoodFactsMapper {
             fiberG = nutriments?.fiber100g,
             sodiumMg = nutriments?.sodium100g?.let { it * 1000f },
             sugarG = nutriments?.sugars100g,
-            saturatedFatG = nutriments?.saturatedFat100g
+            saturatedFatG = nutriments?.saturatedFat100g,
+            cholesterolMg = nutriments?.cholesterol100g?.let { it * 1000f },
+            potassiumMg = nutriments?.potassium100g?.let { it * 1000f },
+            calciumMg = nutriments?.calcium100g?.let { it * 1000f },
+            ironMg = nutriments?.iron100g?.let { it * 1000f }
         )
     }
 
@@ -100,7 +119,11 @@ object OpenFoodFactsMapper {
             fiberG = nutrition.fiberG?.let { it * scaleFactor },
             sodiumMg = nutrition.sodiumMg?.let { it * scaleFactor },
             sugarG = nutrition.sugarG?.let { it * scaleFactor },
-            saturatedFatG = nutrition.saturatedFatG?.let { it * scaleFactor }
+            saturatedFatG = nutrition.saturatedFatG?.let { it * scaleFactor },
+            cholesterolMg = nutrition.cholesterolMg?.let { it * scaleFactor },
+            potassiumMg = nutrition.potassiumMg?.let { it * scaleFactor },
+            calciumMg = nutrition.calciumMg?.let { it * scaleFactor },
+            ironMg = nutrition.ironMg?.let { it * scaleFactor }
         )
     }
 }

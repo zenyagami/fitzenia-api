@@ -2,7 +2,9 @@ package com.zenthek.mapper
 
 import com.zenthek.model.FoodItem
 import com.zenthek.model.FoodSource
+import com.zenthek.model.InternalFoodItem
 import com.zenthek.model.NutritionInfo
+import com.zenthek.model.ResultKind
 import com.zenthek.model.ServingSize
 import com.zenthek.upstream.usda.dto.UsdaSearchFoodDto
 import com.zenthek.upstream.usda.dto.UsdaSearchNutrientDto
@@ -18,6 +20,10 @@ object UsdaMapper {
         const val SODIUM = 1093         // Unit is MG
         const val SUGARS = 2000
         const val SATURATED_FAT = 1258
+        const val CHOLESTEROL = 1253    // Unit is MG
+        const val POTASSIUM = 1092      // Unit is MG
+        const val CALCIUM = 1087        // Unit is MG
+        const val IRON = 1089           // Unit is MG
     }
 
     fun mapSearchItem(item: UsdaSearchFoodDto): FoodItem? {
@@ -40,6 +46,20 @@ object UsdaMapper {
         )
     }
 
+    /**
+     * Same as [mapSearchItem] but also classifies the result as GENERIC vs BRANDED
+     * based on USDA's `dataType`. Used by the Smart Search path; the old barcode
+     * flow still calls [mapSearchItem].
+     */
+    internal fun mapSearchItemWithKind(item: UsdaSearchFoodDto): InternalFoodItem? {
+        val foodItem = mapSearchItem(item) ?: return null
+        val kind = when (item.dataType) {
+            "Foundation", "SR Legacy", "Survey (FNDDS)" -> ResultKind.GENERIC
+            else -> ResultKind.BRANDED  // "Branded" and any unknown dataType default to branded
+        }
+        return InternalFoodItem(foodItem, kind)
+    }
+
     private fun extractNutritionFromSearch(nutrients: List<UsdaSearchNutrientDto>): NutritionInfo {
         return NutritionInfo(
             caloriesKcal = nutrients.findValue(UsdaNutrientId.ENERGY_KCAL) ?: 0f,
@@ -49,7 +69,11 @@ object UsdaMapper {
             fiberG = nutrients.findValue(UsdaNutrientId.FIBER),
             sodiumMg = nutrients.findValue(UsdaNutrientId.SODIUM), // already mg
             sugarG = nutrients.findValue(UsdaNutrientId.SUGARS),
-            saturatedFatG = nutrients.findValue(UsdaNutrientId.SATURATED_FAT)
+            saturatedFatG = nutrients.findValue(UsdaNutrientId.SATURATED_FAT),
+            cholesterolMg = nutrients.findValue(UsdaNutrientId.CHOLESTEROL), // already mg
+            potassiumMg = nutrients.findValue(UsdaNutrientId.POTASSIUM),     // already mg
+            calciumMg = nutrients.findValue(UsdaNutrientId.CALCIUM),         // already mg
+            ironMg = nutrients.findValue(UsdaNutrientId.IRON)                // already mg
         )
     }
 
@@ -112,7 +136,11 @@ object UsdaMapper {
             fiberG = nutrition.fiberG?.let { it * scaleFactor },
             sodiumMg = nutrition.sodiumMg?.let { it * scaleFactor },
             sugarG = nutrition.sugarG?.let { it * scaleFactor },
-            saturatedFatG = nutrition.saturatedFatG?.let { it * scaleFactor }
+            saturatedFatG = nutrition.saturatedFatG?.let { it * scaleFactor },
+            cholesterolMg = nutrition.cholesterolMg?.let { it * scaleFactor },
+            potassiumMg = nutrition.potassiumMg?.let { it * scaleFactor },
+            calciumMg = nutrition.calciumMg?.let { it * scaleFactor },
+            ironMg = nutrition.ironMg?.let { it * scaleFactor }
         )
     }
 

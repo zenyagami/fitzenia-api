@@ -57,63 +57,8 @@ class FoodService(
             .take(limit)
     }
 
-    suspend fun search(query: String, page: Int, pageSize: Int): List<FoodItem> = coroutineScope {
-        val offDeferred = async { runCatching { offClient.search(query, page, pageSize) }.getOrNull() }
-        val fsDeferred = async { runCatching { fsClient.search(query, page, pageSize) }.getOrNull() }
-        val usdaDeferred = async { runCatching { usdaClient.search(query, page, pageSize) }.getOrNull() }
-
-        val offResults = offDeferred.await()
-        val fsResults = fsDeferred.await()
-        val usdaResults = usdaDeferred.await()
-
-        if (offResults == null && fsResults == null && usdaResults == null) {
-            throw UpstreamFailureException("All upstream APIs failed during search.")
-        }
-
-        mergeAndDeduplicate(
-            offResults ?: emptyList(),
-            fsResults ?: emptyList(),
-            usdaResults ?: emptyList()
-        )
-    }
-
-    private fun mergeAndDeduplicate(
-        off: List<FoodItem>,
-        fs: List<FoodItem>,
-        usda: List<FoodItem>
-    ): List<FoodItem> {
-        val finalResults = mutableListOf<FoodItem>()
-        val seenBarcodes = mutableSetOf<String>()
-        val seenNameBrands = mutableSetOf<Pair<String, String?>>()
-
-        // Interleave strategy variables
-        val maxLen = maxOf(off.size, fs.size, usda.size)
-        
-        for (i in 0 until maxLen) {
-            val candidates = listOfNotNull(
-                off.getOrNull(i),
-                fs.getOrNull(i),
-                usda.getOrNull(i)
-            )
-
-            for (item in candidates) {
-                // Deduplicate by Barcode
-                if (item.barcode != null && seenBarcodes.contains(item.barcode)) continue
-                
-                // Deduplicate by normalized Name + Brand pairing
-                val normalizedName = item.name.lowercase().trim()
-                val normalizedBrand = item.brand?.lowercase()?.trim()
-                val nameBrandPair = Pair(normalizedName, normalizedBrand)
-
-                if (seenNameBrands.contains(nameBrandPair)) continue
-
-                // It's a unique fresh item, add to pool
-                if (item.barcode != null) seenBarcodes.add(item.barcode)
-                seenNameBrands.add(nameBrandPair)
-                finalResults.add(item)
-            }
-        }
-
-        return finalResults
-    }
+    // search() + mergeAndDeduplicate() were removed — the Smart Search flow in
+    // SmartSearchOrchestrator replaces them. Barcode + autocomplete paths are
+    // unchanged; FatSecret is still used for autocomplete (so its client stays
+    // wired) but its search endpoint is no longer invoked anywhere.
 }

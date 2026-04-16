@@ -1,5 +1,6 @@
 package com.zenthek.fitzenio.rest
 
+import com.zenthek.ai.GeminiAiSearchClient
 import com.zenthek.auth.AuthenticatedUserContext
 import com.zenthek.auth.configureAuthentication
 import com.zenthek.model.ImageAnalyzer
@@ -7,9 +8,12 @@ import com.zenthek.model.ErrorResponse
 import com.zenthek.routes.RateLimitNames
 import com.zenthek.routes.configureRouting
 import com.zenthek.service.FoodService
+import com.zenthek.service.SmartSearchOrchestrator
 import com.zenthek.service.UnauthorizedException
 import com.zenthek.service.UpstreamFailureException
 import com.zenthek.service.UserProfileService
+import com.zenthek.upstream.supabase.CanonicalCatalogClient
+import com.zenthek.upstream.supabase.CanonicalCatalogGateway
 import com.zenthek.upstream.supabase.SupabaseClient
 import com.zenthek.upstream.openai.OpenAiApiService
 import com.zenthek.upstream.fatsecret.FatSecretClient
@@ -36,6 +40,12 @@ import io.ktor.server.plugins.ratelimit.RateLimit
 import io.ktor.server.plugins.ratelimit.RateLimitName
 import io.ktor.server.plugins.statuspages.StatusPages
 import io.ktor.server.response.respond
+import io.ktor.server.application.ApplicationStopping
+import kotlinx.coroutines.CoroutineName
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 import kotlin.time.Duration.Companion.minutes
@@ -68,6 +78,41 @@ fun Application.module() {
     val supabaseClient = SupabaseClient(httpClient, config.supabase)
     val userProfileService = UserProfileService(supabaseClient)
 
+    // Smart Food Search: shared canonical catalog (service-role) + Gemini AI classify/generate.
+    // When SMART_FOOD_SEARCH_ENABLED=false, the catalog + AI clients are still constructed
+    // but never invoked — the orchestrator takes the upstream-only branch.
+    val canonicalCatalog: CanonicalCatalogGateway = CanonicalCatalogClient(
+        httpClient = httpClient,
+        config = config.supabase,
+        serviceRoleKey = config.apiKeys.supabaseServiceRoleKey ?: "DISABLED"
+    )
+    val aiSearchClient = GeminiAiSearchClient(
+        httpClient = httpClient,
+        apiKey = config.geminiApiKey,
+        rankModel = config.smartSearch.aiRankModel,
+        generateModel = config.smartSearch.aiGenerateModel
+    )
+    // Background scope for async write-behind AI generation. SupervisorJob so one failed
+    // generation doesn't cancel siblings. Dispatchers.IO because these coroutines are
+    // almost entirely waiting on Gemini + Supabase HTTP calls. Cancelled on app shutdown
+    // below so in-flight work can finish cleanly.
+    val smartSearchBackgroundScope = CoroutineScope(
+        SupervisorJob() + Dispatchers.IO + CoroutineName("smart-search-bg")
+    )
+    monitor.subscribe(ApplicationStopping) {
+        log.info("Cancelling smart-search background scope on app shutdown")
+        smartSearchBackgroundScope.cancel()
+    }
+
+    val smartSearch = SmartSearchOrchestrator(
+        offSearch = { q, p, ps, loc, ctry -> offClient.searchPaged(q, p, ps, loc, ctry) },
+        usdaSearch = { q, p, ps, loc, ctry -> usdaClient.searchPaged(q, p, ps, loc, ctry) },
+        catalog = canonicalCatalog,
+        ai = aiSearchClient,
+        config = config.smartSearch,
+        backgroundScope = smartSearchBackgroundScope
+    )
+
     warnIfRemoteMode(config.supabase)
     probeJwks(httpClient, config.supabase)
 
@@ -75,7 +120,7 @@ fun Application.module() {
     configureStatusPages()
     configureRateLimit()
     configureAuthentication(config.supabase, supabaseClient)
-    configureRouting(foodService, imageAnalyzer, userProfileService)
+    configureRouting(foodService, smartSearch, imageAnalyzer, userProfileService)
 }
 
 fun Application.configureRateLimit() {

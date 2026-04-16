@@ -7,8 +7,10 @@ import com.zenthek.model.AnalyzeImageRequest
 import com.zenthek.model.ImageAnalysisResponse
 import com.zenthek.model.ImageAnalyzer
 import com.zenthek.model.RegisterUserRequest
-import com.zenthek.model.SearchResponse
 import com.zenthek.service.FoodService
+import com.zenthek.model.SearchStreamBestMatch
+import com.zenthek.model.SmartSearchResponse
+import com.zenthek.service.SmartSearchOrchestrator
 import com.zenthek.service.UserProfileService
 import io.ktor.http.*
 import io.ktor.server.auth.authenticate
@@ -37,6 +39,7 @@ private suspend fun ByteWriteChannel.sendSseEvent(event: String, data: String) {
 
 fun Application.configureRouting(
     foodService: FoodService,
+    smartSearch: SmartSearchOrchestrator,
     imageAnalyzer: ImageAnalyzer,
     userProfileService: UserProfileService,
 ) {
@@ -47,7 +50,7 @@ fun Application.configureRouting(
 
         authenticate(SUPABASE_AUTH_PROVIDER) {
             route("/api/food") {
-                configureFoodRoutes(foodService, imageAnalyzer)
+                configureFoodRoutes(foodService, smartSearch, imageAnalyzer)
             }
 
             route("/api/user") {
@@ -59,6 +62,7 @@ fun Application.configureRouting(
 
 fun Route.configureFoodRoutes(
     foodService: FoodService,
+    smartSearch: SmartSearchOrchestrator,
     imageAnalyzer: ImageAnalyzer,
 ) {
     rateLimit(RateLimitName(RateLimitNames.FOOD_SEARCH)) {
@@ -82,14 +86,73 @@ fun Route.configureFoodRoutes(
                 ?: throw IllegalArgumentException("Missing required parameter: q")
             if (query.isBlank()) throw IllegalArgumentException("Parameter 'q' must not be blank")
 
+            val locale = call.request.queryParameters["locale"]?.trim()
+                ?: throw IllegalArgumentException("Missing required parameter: locale")
+            if (locale.isBlank()) throw IllegalArgumentException("Parameter 'locale' must not be blank")
+
+            val country = call.request.queryParameters["country"]?.trim()?.ifBlank { null }
+            val ipCountry = extractIpCountry(call.request.headers)
+
             val page = call.request.queryParameters["page"]?.toIntOrNull() ?: 0
             val pageSize = call.request.queryParameters["pageSize"]?.toIntOrNull() ?: 25
             if (pageSize > 50) throw IllegalArgumentException("pageSize cannot exceed 50")
 
-            log.debug("[FOOD] search userId={} query={} page={} pageSize={}", authenticatedUser.userId, query, page, pageSize)
-            val results = foodService.search(query, page, pageSize)
+            log.debug(
+                "[FOOD] search userId={} query={} locale={} country={} ipCountry={} page={} pageSize={}",
+                authenticatedUser.userId, query, locale, country, ipCountry, page, pageSize
+            )
+            val response = smartSearch.search(query, locale, country, page, pageSize, ipCountry)
 
-            call.respond(HttpStatusCode.OK, SearchResponse(results, results.size, page, pageSize))
+            call.respond(HttpStatusCode.OK, response)
+        }
+
+        get("/search/stream") {
+            val authenticatedUser = call.requireAuthenticatedUser()
+            val query = call.request.queryParameters["q"]?.trim()
+                ?: throw IllegalArgumentException("Missing required parameter: q")
+            if (query.isBlank()) throw IllegalArgumentException("Parameter 'q' must not be blank")
+
+            val locale = call.request.queryParameters["locale"]?.trim()
+                ?: throw IllegalArgumentException("Missing required parameter: locale")
+            if (locale.isBlank()) throw IllegalArgumentException("Parameter 'locale' must not be blank")
+
+            val country = call.request.queryParameters["country"]?.trim()?.ifBlank { null }
+            val ipCountry = extractIpCountry(call.request.headers)
+
+            val page = call.request.queryParameters["page"]?.toIntOrNull() ?: 0
+            val pageSize = call.request.queryParameters["pageSize"]?.toIntOrNull() ?: 25
+            if (pageSize > 50) throw IllegalArgumentException("pageSize cannot exceed 50")
+
+            log.debug(
+                "[FOOD] search/stream userId={} query={} locale={} country={} ipCountry={} page={} pageSize={}",
+                authenticatedUser.userId, query, locale, country, ipCountry, page, pageSize
+            )
+
+            call.response.cacheControl(CacheControl.NoCache(null))
+            call.respondBytesWriter(contentType = ContentType.Text.EventStream) {
+                try {
+                    smartSearch.searchAsFlow(query, locale, country, page, pageSize, ipCountry)
+                        .collect { event ->
+                            when (event) {
+                                is SmartSearchOrchestrator.SearchStreamEvent.Upstream ->
+                                    sendSseEvent(
+                                        "upstream",
+                                        sseJson.encodeToString(SmartSearchResponse.serializer(), event.response)
+                                    )
+                                is SmartSearchOrchestrator.SearchStreamEvent.BestMatch ->
+                                    sendSseEvent(
+                                        "bestMatch",
+                                        sseJson.encodeToString(SearchStreamBestMatch.serializer(), event.payload)
+                                    )
+                                SmartSearchOrchestrator.SearchStreamEvent.Done ->
+                                    sendSseEvent("done", "{}")
+                            }
+                        }
+                } catch (e: Exception) {
+                    application.log.error("SSE search/stream failed", e)
+                    sendSseEvent("error", """{"message":"Search failed"}""")
+                }
+            }
         }
 
         get("/barcode/{barcode}") {
@@ -172,4 +235,33 @@ fun Route.configureUserRoutes(userProfileService: UserProfileService) {
         log.info("[USER] registration-status completed isRegistered={}", response.isRegistered)
         call.respond(HttpStatusCode.OK, response)
     }
+}
+
+/**
+ * Extracts a best-effort 2-letter ISO country code from common CDN / load-balancer
+ * geo headers. Used as a fallback when the client does not send the `country`
+ * query param and the locale has no region segment. Returns null if no header
+ * resolves to a real country code.
+ *
+ * Orders by trust:
+ *   1. `Cf-IPCountry`           — Cloudflare (most common edge).
+ *   2. `X-Appengine-Country`    — App Engine / some GCP runtimes.
+ *   3. `X-Client-Geo-Location`  — certain GCP Cloud Load Balancer configs.
+ *   4. `X-Goog-Country`         — rare, but observed on some GCP frontends.
+ *
+ * The orchestrator re-validates + rejects CDN sentinels like `XX`/`T1`/`ZZ`,
+ * so we don't filter here.
+ */
+private fun extractIpCountry(headers: io.ktor.http.Headers): String? {
+    val candidateHeaders = listOf(
+        "Cf-IPCountry",
+        "X-Appengine-Country",
+        "X-Client-Geo-Location",
+        "X-Goog-Country"
+    )
+    for (name in candidateHeaders) {
+        val value = headers[name]?.trim()?.ifBlank { null }
+        if (value != null) return value
+    }
+    return null
 }

@@ -1,7 +1,7 @@
 apiVersion: serving.knative.dev/v1
 kind: Service
 metadata:
-  name: fitzenio-api-prod
+  name: fitzenia-api-prod
   labels:
     cloud.googleapis.com/location: europe-north1
   annotations:
@@ -30,10 +30,10 @@ spec:
       containerConcurrency: 20
       timeoutSeconds: 60
       # Use default compute service account for now
-      # serviceAccountName: fitzenio-cloudrun@PROJECT_ID.iam.gserviceaccount.com
+      # serviceAccountName: fitzenia-cloudrun@PROJECT_ID.iam.gserviceaccount.com
       containers:
-      - name: fitzenio-api-prod
-        image: gcr.io/PROJECT_ID/fitzenio-api-prod:IMAGE_TAG
+      - name: fitzenia-api-prod
+        image: gcr.io/PROJECT_ID/fitzenia-api-prod:IMAGE_TAG
         ports:
         - name: http1
           containerPort: 8080
@@ -79,6 +79,34 @@ spec:
               key: latest
         - name: SUPABASE_JWT_VERIFICATION_MODE
           value: "JWKS"
+        # ---------- Smart Food Search ----------
+        # Conservative prod default: OFF. Flip to "true" after dev verification when ready.
+        # When ENABLED=true, SUPABASE_SERVICE_ROLE_KEY is required (ConfigLoader fails otherwise).
+        - name: SMART_FOOD_SEARCH_ENABLED
+          value: "false"
+        - name: SMART_SEARCH_USDA_ENABLED
+          value: "true"
+        # false = async write-behind (first user sees upstream-only, catalog warms in background).
+        # true  = sync-on-miss (first user waits 5-10s for AI but sees bestMatch in same request).
+        - name: SMART_SEARCH_AI_SYNC_ON_MISS
+          value: "false"
+        - name: AI_SEARCH_RANK_MODEL
+          value: "gemini-2.5-flash-lite"
+        - name: AI_SEARCH_GENERATE_MODEL
+          value: "gemini-2.5-flash"
+        - name: AI_SEARCH_CLASSIFY_TIMEOUT_MS
+          value: "3000"
+        - name: AI_SEARCH_GENERATE_TIMEOUT_MS
+          value: "8000"
+        - name: CATALOG_WRITE_CONFIDENCE_THRESHOLD
+          value: "0.7"
+        # Backend-only. Bypasses RLS. Never expose to clients.
+        # Only needed/read when SMART_FOOD_SEARCH_ENABLED=true.
+        - name: SUPABASE_SERVICE_ROLE_KEY
+          valueFrom:
+            secretKeyRef:
+              name: SUPABASE_SERVICE_ROLE_KEY
+              key: latest
         resources:
           limits:
             cpu: "1"

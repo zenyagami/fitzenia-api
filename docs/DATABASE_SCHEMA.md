@@ -434,6 +434,104 @@ CREATE POLICY "recent_food: owner access"
 
 ---
 
+## Canonical Food Catalog
+
+Shared global catalog of AI-synthesized canonical foods (e.g. "cheesecake", "flat white") used by Smart Food Search. Service-role write only — these are not user-scoped tables. RLS is enabled with no policies, so only `service_role` (which bypasses RLS) can read or write them. The backend uses a dedicated service-role client (`SUPABASE_SERVICE_ROLE_KEY`); never accessed via user-JWT paths.
+
+DDL lives in `db/migrations/001_canonical_food_catalog.sql` (apply via `psql`).
+
+### `canonical_food_item`
+
+One row per locale-specific canonical food. `canonical_group_id` links cross-locale equivalents (e.g. "cheesecake" / "チーズケーキ") into the same conceptual food when the LLM equivalence check + ±15% nutrition sanity gate accept the link.
+
+```sql
+CREATE TABLE IF NOT EXISTS public.canonical_food_item (
+    id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    canonical_group_id UUID NOT NULL DEFAULT gen_random_uuid(),
+    primary_locale     TEXT NOT NULL,
+    primary_country    TEXT NOT NULL DEFAULT 'GLOBAL',
+    ai_generated       BOOLEAN NOT NULL DEFAULT true,
+    model_provider     TEXT NOT NULL,
+    model_name         TEXT NOT NULL,
+    confidence         REAL NOT NULL CHECK (confidence >= 0 AND confidence <= 1),
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+ALTER TABLE public.canonical_food_item ENABLE ROW LEVEL SECURITY;
+```
+
+### `canonical_food_serving`
+
+Servings for a canonical food. Always includes a `100g` serving (server-side validation rejects writes without one). Macros validated for non-negativity and calorie-macro consistency before persist.
+
+```sql
+CREATE TABLE IF NOT EXISTS public.canonical_food_serving (
+    id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    canonical_food_id UUID NOT NULL REFERENCES public.canonical_food_item(id) ON DELETE CASCADE,
+    name              TEXT NOT NULL,
+    weight_grams      REAL NOT NULL CHECK (weight_grams > 0),
+    calories_kcal     REAL NOT NULL CHECK (calories_kcal >= 0),
+    protein_g         REAL NOT NULL CHECK (protein_g >= 0),
+    carbs_g           REAL NOT NULL CHECK (carbs_g >= 0),
+    fat_g             REAL NOT NULL CHECK (fat_g >= 0),
+    fiber_g           REAL,
+    sodium_mg         REAL,
+    sugar_g           REAL,
+    saturated_fat_g   REAL
+);
+
+ALTER TABLE public.canonical_food_serving ENABLE ROW LEVEL SECURITY;
+```
+
+### `canonical_food_term`
+
+Localized names + aliases for a canonical food. `pg_trgm` GIN index on `name` supports the fuzzy english-equivalent lookup used during cross-locale linking.
+
+```sql
+CREATE TABLE IF NOT EXISTS public.canonical_food_term (
+    id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    canonical_food_id UUID NOT NULL REFERENCES public.canonical_food_item(id) ON DELETE CASCADE,
+    locale            TEXT NOT NULL,
+    name              TEXT NOT NULL,
+    is_alias          BOOLEAN NOT NULL DEFAULT false
+);
+
+ALTER TABLE public.canonical_food_term ENABLE ROW LEVEL SECURITY;
+```
+
+### `canonical_food_query_map`
+
+Maps `(normalized_query, locale, country, rank)` → `canonical_food_id`. `rank = 0` is the `bestMatch`; `rank ≥ 1` are `bestMatchCandidates` for broad queries (e.g. `sandwich` → 3 candidate canonicals).
+
+`country` is `NOT NULL DEFAULT 'GLOBAL'` deliberately — Postgres allows multiple NULL rows under a unique key, which would break slot uniqueness, so we use a sentinel string.
+
+```sql
+CREATE TABLE IF NOT EXISTS public.canonical_food_query_map (
+    id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    normalized_query  TEXT NOT NULL,
+    locale            TEXT NOT NULL,
+    country           TEXT NOT NULL DEFAULT 'GLOBAL',
+    canonical_food_id UUID NOT NULL REFERENCES public.canonical_food_item(id) ON DELETE CASCADE,
+    rank              SMALLINT NOT NULL CHECK (rank >= 0),
+    UNIQUE (normalized_query, locale, country, rank),
+    UNIQUE (normalized_query, locale, country, canonical_food_id)
+);
+
+ALTER TABLE public.canonical_food_query_map ENABLE ROW LEVEL SECURITY;
+```
+
+### `insert_canonical_foods` (RPC)
+
+The single transactional write entry point. Slot-idempotent and batch-aware. Application code never INSERTs into the catalog tables directly — always via this RPC.
+
+- **Lock**: `pg_advisory_xact_lock(hashtextextended(query|locale|country, 0))` — auto-released at transaction end.
+- **Slot check**: if all requested ranks are already filled → return `status: "reused"` with the existing `canonical_food_id`s (no writes). If partial → return `status: "partial"` and surface the inconsistency. If none → insert all transactionally and return `status: "inserted"`.
+- **Granted to** `service_role` only; revoked from `anon` and `authenticated`.
+
+See `db/migrations/001_canonical_food_catalog.sql` for the full function body and the orchestrator's response handling for each `status`.
+
+---
+
 ## Ownership summary
 
 | Table | Written by | Has `sync_status` |
@@ -450,6 +548,10 @@ CREATE POLICY "recent_food: owner access"
 | `my_meal_ingredient` | Client sync | Yes |
 | `recent_food` | Client sync | Yes |
 | `rls_mode_config` | Manual seed | — |
+| `canonical_food_item` | Backend only (service-role, via `insert_canonical_foods` RPC) | No |
+| `canonical_food_serving` | Backend only (service-role, via `insert_canonical_foods` RPC) | No |
+| `canonical_food_term` | Backend only (service-role, via `insert_canonical_foods` RPC) | No |
+| `canonical_food_query_map` | Backend only (service-role, via `insert_canonical_foods` RPC) | No |
 
 ---
 
