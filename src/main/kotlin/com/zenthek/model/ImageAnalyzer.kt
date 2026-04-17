@@ -67,6 +67,47 @@ Additional context may be provided in the user message. Apply in this priority o
    Estimate volume first, then apply density to derive weight.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 2.5 — SERVING UNIT SELECTION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+For each item, choose the most natural serving unit a human would use to count or measure it. Priority:
+
+1. COUNT NOUN when the food is discrete and uniform:
+   "taco", "slice", "cookie", "sandwich", "dumpling", "egg", "nugget", "wing", "roll",
+   "pancake", "waffle", "skewer", "piece", "wedge", "bun", "patty", "scoop"
+   Examples:
+     • Photo of 5 pastor tacos → servingUnit="taco", servingCount=5
+     • 3 chocolate chip cookies → servingUnit="cookie", servingCount=3
+     • Half of a sandwich  → servingUnit="sandwich", servingCount=0.5
+
+2. VOLUME UNIT for liquids and pourables:
+   "ml" (preferred), "cup", "tbsp", "tsp", "fl_oz"
+   Examples:
+     • Can of cola → servingUnit="ml", servingCount=355
+     • Bowl of soup → servingUnit="ml", servingCount=400
+     • A cup of coffee → servingUnit="ml", servingCount=240
+
+3. WEIGHT UNIT only as a fallback when no count/volume fits:
+   "g" (preferred) or "oz"
+   Examples:
+     • A portion of fried rice on a plate → servingUnit="g", servingCount=200
+     • A fillet of salmon → PREFER servingUnit="fillet", servingCount=1 over grams
+     • Grated cheese heap → servingUnit="g", servingCount=30
+
+Rules:
+- `name` must be the SINGULAR form of the food (so the UI can render "5 × Taco al pastor"
+  cleanly). Use "Taco al pastor", not "Tacos al pastor".
+- The per-item nutrition fields (calories, proteinG, carbsG, fatG, fiberG, sodiumMg) are
+  for ONE unit of `servingUnit`. If one taco has ~150 kcal, return calories=150 even when
+  servingCount=5. The response `totalCalories` is the sum of `calories × servingCount`
+  across all items.
+- `weightG` is still the TOTAL grams visible in the photo (= count × per-unit grams).
+  Include it for sanity-checking and for the backend/client to cross-validate.
+- Prefer count nouns over grams whenever the food is discrete. A user thinks "2 tacos",
+  not "170 g of taco".
+- If the item is a single whole dish with no natural sub-unit (e.g. a bowl of pasta
+  primavera), use servingUnit="portion", servingCount=1.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 STEP 3 — RESTAURANT DETECTION
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Determine "isLikelyRestaurant" (true/false):
@@ -82,9 +123,13 @@ STEP 4 — IDENTIFICATION, HIDDEN INGREDIENTS & ESTIMATION
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 1. Identify every distinct food item visible.
 2. For each item, estimate portion in grams using Step 2 priority rules.
-3. Calculate calories and macros per item from standard nutritional databases.
-   - Prefer brand/restaurant data when the source is identifiable (e.g., "Big Mac").
-   - Use USDA/standard averages for homemade or unbranded items.
+3. Calculate per-UNIT nutrition using Step 2.5's servingUnit. `calories`, `proteinG`,
+   `carbsG`, `fatG`, `fiberG`, and `sodiumMg` on each item are for exactly ONE unit of
+   `servingUnit` — NOT the sum for the whole photo.
+   - For branded items (Big Mac, specific drink brand), use the brand's published
+     per-unit nutrition.
+   - For generic items, use USDA/standard averages per unit (per taco, per slice of
+     bread, per ml).
 4. Scan for hidden calories — do not only log what is visibly on top:
    - Surface sheen: if the food looks oily or glossy, consider adding "Cooking Oil" or "Butter"
      as a separate item. Only do this when the sheen is clearly visible and not a natural
@@ -93,11 +138,13 @@ STEP 4 — IDENTIFICATION, HIDDEN INGREDIENTS & ESTIMATION
    - Estimate sodium (mg) per item where reasonably possible (soy sauce, processed foods,
      restaurant dishes). Use null when sodium is genuinely unknown (plain steamed vegetables).
 5. Sum all items into totals.
-6. Assign confidence per item:
+6. Totals: `totalCalories` and `totalXxxG` at the response level are
+   `Σ (item.calories × item.servingCount)` etc., summed across all items in the photo.
+7. Assign confidence per item:
    - "high" — food type AND portion are clearly identifiable
    - "medium" — one factor (type or portion) is uncertain
    - "low" — both are uncertain, item is partially obscured, or sauce/dressing hidden
-7. Do NOT invent items not visible in the image.
+8. Do NOT invent items not visible in the image.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 STEP 5 — TITLE & SUBTITLE
@@ -126,11 +173,13 @@ RESPONSE SCHEMA (strict — return ONLY valid JSON, no markdown, no code fences)
   "isLikelyRestaurant": boolean,
   "items": [
     {
-      "name": string,
-      "portionDescription": string,
-      "weightG": number,
+      "name": string,                  // SINGULAR form
+      "portionDescription": string,    // free-form blurb (unchanged)
+      "servingUnit": string,           // "taco" | "slice" | "ml" | "g" | "portion" | etc.
+      "servingCount": number,          // count of servingUnit detected (>0)
+      "weightG": number,               // TOTAL grams for the whole detected portion
       "confidence": "high" | "medium" | "low",
-      "calories": number,
+      "calories": number,              // per ONE servingUnit
       "proteinG": number,
       "carbsG": number,
       "fatG": number,
@@ -156,5 +205,10 @@ RULES
 - If a portion is completely inestimable, omit that item and mention it in "notes".
 - If a locale is provided, return all string fields in that locale's language.
   Use locally common food names (e.g. "Arroz Branco" for pt-BR, "Riz Blanc" for fr-FR).
+- Every item MUST include servingUnit and servingCount. If truly uncertain, use
+  servingUnit="portion" and servingCount=1, and downgrade confidence to "low".
+- Per-item nutrition fields are per-ONE-servingUnit. Totals are summed across
+  `item.calories × item.servingCount` across all items.
+- `name` is always singular. Quantity belongs in `servingCount`, never in `name`.
 """.trimIndent()
 }

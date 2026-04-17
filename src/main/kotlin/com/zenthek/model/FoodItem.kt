@@ -111,10 +111,14 @@ data class ApiError(
 
 @Serializable
 data class ImageAnalysisItem(
-    val name: String,
-    val portionDescription: String,
-    val weightG: Double,
+    val name: String,                // SINGULAR form: "Taco al pastor", "Cola", "Sandwich"
+    val portionDescription: String,  // Human-readable blurb
+    val servingUnit: String,         // "taco" | "slice" | "cookie" | "sandwich" | "piece" |
+                                     // "cup" | "tbsp" | "ml" | "g" | "oz" | "portion" | ...
+    val servingCount: Double,        // how many of `servingUnit` detected (>0)
+    val weightG: Double,             // TOTAL grams for the whole detected portion
     val confidence: String,
+    // Per-ONE-servingUnit nutrition:
     val calories: Int,
     val proteinG: Double,
     val carbsG: Double,

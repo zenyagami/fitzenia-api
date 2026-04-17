@@ -103,7 +103,7 @@ class GeminiApiService(
                 }
             }
             putJsonObject("generationConfig") {
-                put("maxOutputTokens", 3000)
+                put("maxOutputTokens", 6000)
                 put("responseMimeType", "application/json")
                 putJsonObject("thinkingConfig") {
                     put("thinkingBudget", GeminiThinkingBudget.MEDIUM.tokens)

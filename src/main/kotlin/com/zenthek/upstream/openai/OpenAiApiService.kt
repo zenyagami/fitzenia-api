@@ -46,7 +46,7 @@ class OpenAiApiService(
 
         val requestBody = buildJsonObject {
             put("model", "gpt-5-mini")
-            put("max_output_tokens", 3000)
+            put("max_output_tokens", 6000)
             putJsonObject("reasoning") { put("effort", "low") }
             put("instructions", IMAGE_ANALYZE_SYSTEM_PROMPT)
             putJsonArray("input") {

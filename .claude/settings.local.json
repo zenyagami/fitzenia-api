@@ -59,7 +59,8 @@
       "Bash(\\\\grep -c \"^}\" /Users/zenkun/Documents/IntelliJProjects/Fitzenia-api/src/main/kotlin/com/zenthek/routes/Routing.kt)",
       "Bash(./gradlew compileKotlin compileTestKotlin test)",
       "Bash(./gradlew compileKotlin test)",
-      "Bash(./gradlew compileTestKotlin test)"
+      "Bash(./gradlew compileTestKotlin test)",
+      "Bash(./gradlew compileKotlin --console=plain)"
     ]
   },
   "enableAllProjectMcpServers": true,
