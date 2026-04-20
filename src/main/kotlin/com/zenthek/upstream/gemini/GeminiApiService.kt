@@ -2,6 +2,8 @@ package com.zenthek.upstream.gemini
 
 import com.zenthek.model.ImageAnalysisResponse
 import com.zenthek.model.ImageAnalyzer
+import com.zenthek.model.ImageAnalyzerFactory.buildImageAnalyzeUserPrompt
+import com.zenthek.model.ImageAnalyzerFactory.imageAnalysisResponseSchema
 import com.zenthek.model.ImageAnalyzerFactory.IMAGE_ANALYZE_SYSTEM_PROMPT
 import io.ktor.client.*
 import io.ktor.client.plugins.*
@@ -74,16 +76,20 @@ class GeminiApiService(
         locale: String?,
         mimeType: String
     ): ImageAnalysisResponse {
-        log.info("analyzeImage called via Gemini [$GEMINI_MODEL], mimeType=$mimeType, mealTitle=$mealTitle")
+        log.info(
+            "analyzeImage called via Gemini [{}], mimeType={}, mealTitlePresent={}",
+            GEMINI_MODEL,
+            mimeType,
+            !mealTitle.isNullOrBlank()
+        )
 
         val base64Image = Base64.getEncoder().encodeToString(imageBytes)
 
-        val userText = buildString {
-            if (!locale.isNullOrBlank()) append("Locale: $locale — return all text fields in the language of this locale.\n")
-            if (!mealTitle.isNullOrBlank()) append("The user described this meal as: \"$mealTitle\"\n")
-            if (!additionalContext.isNullOrBlank()) append("Additional context: \"$additionalContext\"\n")
-            append("Analyze the food in this image.")
-        }
+        val userText = buildImageAnalyzeUserPrompt(
+            mealTitle = mealTitle,
+            additionalContext = additionalContext,
+            locale = locale
+        )
 
         val cacheName = getOrCreateCache()
 
@@ -105,6 +111,7 @@ class GeminiApiService(
             putJsonObject("generationConfig") {
                 put("maxOutputTokens", 6000)
                 put("responseMimeType", "application/json")
+                put("responseJsonSchema", imageAnalysisResponseSchema())
                 putJsonObject("thinkingConfig") {
                     put("thinkingBudget", GeminiThinkingBudget.MEDIUM.tokens)
                 }

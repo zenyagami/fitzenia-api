@@ -2,6 +2,8 @@ package com.zenthek.upstream.openai
 
 import com.zenthek.model.ImageAnalysisResponse
 import com.zenthek.model.ImageAnalyzer
+import com.zenthek.model.ImageAnalyzerFactory.buildImageAnalyzeUserPrompt
+import com.zenthek.model.ImageAnalyzerFactory.imageAnalysisResponseSchema
 import com.zenthek.model.ImageAnalyzerFactory.IMAGE_ANALYZE_SYSTEM_PROMPT
 import io.ktor.client.*
 import io.ktor.client.plugins.*
@@ -26,12 +28,11 @@ class OpenAiApiService(
         mimeType: String
     ): Pair<String, String> {
         val dataUrl = "data:$mimeType;base64,${Base64.getEncoder().encodeToString(imageBytes)}"
-        val userText = buildString {
-            if (!locale.isNullOrBlank()) append("Locale: $locale — return all text fields in the language of this locale.\n")
-            if (!mealTitle.isNullOrBlank()) append("The user described this meal as: \"$mealTitle\"\n")
-            if (!additionalContext.isNullOrBlank()) append("Additional context: \"$additionalContext\"\n")
-            append("Analyze the food in this image.")
-        }
+        val userText = buildImageAnalyzeUserPrompt(
+            mealTitle = mealTitle,
+            additionalContext = additionalContext,
+            locale = locale
+        )
         return dataUrl to userText
     }
 
@@ -46,9 +47,18 @@ class OpenAiApiService(
 
         val requestBody = buildJsonObject {
             put("model", "gpt-5-mini")
+            put("store", false)
             put("max_output_tokens", 6000)
             putJsonObject("reasoning") { put("effort", "low") }
             put("instructions", IMAGE_ANALYZE_SYSTEM_PROMPT)
+            putJsonObject("text") {
+                putJsonObject("format") {
+                    put("type", "json_schema")
+                    put("name", "image_analysis_response")
+                    put("strict", true)
+                    put("schema", imageAnalysisResponseSchema())
+                }
+            }
             putJsonArray("input") {
                 addJsonObject {
                     put("role", "user")
