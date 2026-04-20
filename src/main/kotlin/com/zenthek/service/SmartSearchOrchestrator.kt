@@ -112,6 +112,8 @@ class SmartSearchOrchestrator internal constructor(
         pageSize: Int,
         ipCountry: String? = null
     ): SmartSearchResponse = coroutineScope {
+        @Suppress("NAME_SHADOWING")
+        val locale = QueryNormalizer.canonicalLocale(locale)
         val normalized = QueryNormalizer.normalize(query)
         val resolvedCountry = resolveCountry(country, locale, ipCountry)
 
@@ -260,6 +262,8 @@ class SmartSearchOrchestrator internal constructor(
         pageSize: Int,
         ipCountry: String? = null
     ): Flow<SearchStreamEvent> = flow {
+        @Suppress("NAME_SHADOWING")
+        val locale = QueryNormalizer.canonicalLocale(locale)
         val normalized = QueryNormalizer.normalize(query)
         val resolvedCountry = resolveCountry(country, locale, ipCountry)
 
@@ -492,7 +496,7 @@ class SmartSearchOrchestrator internal constructor(
             val foodItem = item.foodItem
             if (foodItem.source == FoodSource.OPEN_FOOD_FACTS &&
                 foodItem.brand == null &&
-                QueryNormalizer.containsAsWholeTokens(foodItem.name, normalizedQuery)
+                QueryNormalizer.exactTokenMatch(foodItem.name, normalizedQuery)
             ) {
                 promoted += InternalFoodItem(foodItem, ResultKind.GENERIC)
             } else {
