@@ -69,6 +69,7 @@ fun createSupabaseAccessToken(
     subject: String = "user-1",
     role: String = "authenticated",
     email: String? = "test@example.com",
+    userMetadata: Map<String, Any> = emptyMap(),
     audience: List<String> = listOf("authenticated"),
     issuer: String = "$baseUrl/auth/v1",
     expiresAt: Date = Date(System.currentTimeMillis() + 10 * 60 * 1000),
@@ -86,6 +87,9 @@ fun createSupabaseAccessToken(
 
     if (email != null) {
         tokenBuilder.withClaim("email", email)
+    }
+    if (userMetadata.isNotEmpty()) {
+        tokenBuilder.withClaim("user_metadata", userMetadata)
     }
 
     return tokenBuilder.sign(algorithm)

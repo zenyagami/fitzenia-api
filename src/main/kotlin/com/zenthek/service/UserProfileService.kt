@@ -25,9 +25,9 @@ class UserProfileService(
         request: RegisterUserRequest,
     ): RegisterUserResponse {
         log.info("[USER] registerIfAbsent started userId={}", authenticatedUser.userId)
-        val authenticatedEmail = resolveAuthenticatedEmail(authenticatedUser, accessToken)
+        val authenticatedProfile = resolveAuthenticatedProfile(authenticatedUser, accessToken)
 
-        validateRegisterRequest(request, authenticatedUser.userId, authenticatedEmail)
+        validateRegisterRequest(request, authenticatedUser.userId, authenticatedProfile.email)
         log.info("[USER] payload validation passed userId={}", authenticatedUser.userId)
 
         val profileExists = supabaseGateway.profileExists(accessToken, authenticatedUser.userId).getOrElse { error ->
@@ -48,8 +48,7 @@ class UserProfileService(
         )
 
         val now = System.currentTimeMillis()
-        val tokenEmail = authenticatedEmail.trim()
-        val profileForInsert = request.userProfile.toServerProfile(tokenEmail, now)
+        val profileForInsert = request.userProfile.toServerProfile(authenticatedProfile, now)
         val userGoalForInsert = request.userGoal.toServerUserGoal(now)
         val calorieTargetForInsert = request.calorieTarget.toServerCalorieTarget(now)
 
@@ -63,6 +62,7 @@ class UserProfileService(
             log.info("[USER] profile created userId={} profileId={}", authenticatedUser.userId, profileForInsert.id)
             insertedAny = true
         } else {
+            maybeBackfillExistingProfileIdentity(accessToken, authenticatedUser.userId, authenticatedProfile, now)
             log.info("[USER] profile already exists for userId={}, skipping insert", authenticatedUser.userId)
         }
 
@@ -147,26 +147,52 @@ class UserProfileService(
         }
     }
 
-    private suspend fun resolveAuthenticatedEmail(
+    private suspend fun resolveAuthenticatedProfile(
         authenticatedUser: AuthenticatedUserContext,
         accessToken: String,
-    ): String {
-        authenticatedUser.email?.trim()?.takeIf { it.isNotBlank() }?.let { return it }
+    ): ResolvedAuthenticatedProfile {
+        var email = authenticatedUser.email.normalizeOptionalField()
+        var name = authenticatedUser.name.normalizeOptionalField()
+        var avatarUrl = authenticatedUser.avatarUrl.normalizeOptionalField()
 
-        log.info("[USER] JWT email missing, falling back to Supabase user lookup userId={}", authenticatedUser.userId)
-        val fetchedUser = supabaseGateway.fetchAuthenticatedUser(accessToken).getOrElse { error ->
-            when (error) {
-                is UnauthorizedException -> {
-                    log.warn("[USER] token validation failed during email fallback: {}", error.message)
-                    throw error
-                }
+        if (email == null || name == null || avatarUrl == null) {
+            log.info(
+                "[USER] auth profile incomplete, falling back to Supabase user lookup userId={} missingEmail={} missingName={} missingAvatarUrl={}",
+                authenticatedUser.userId,
+                email == null,
+                name == null,
+                avatarUrl == null
+            )
+            val fetchedUser = fetchAuthenticatedUserOrThrow(authenticatedUser, accessToken)
+            email = email ?: fetchedUser.email.normalizeOptionalField()
+            name = name ?: fetchedUser.name.normalizeOptionalField()
+            avatarUrl = avatarUrl ?: fetchedUser.avatarUrl.normalizeOptionalField()
+        }
 
-                else -> {
-                    log.error("[USER] unexpected Supabase auth lookup failure", error)
-                    throw UpstreamFailureException("Unable to resolve authenticated user email")
-                }
+        val resolvedEmail = email ?: throw IllegalArgumentException("authenticated user email is required")
+        return ResolvedAuthenticatedProfile(
+            email = resolvedEmail,
+            name = name ?: resolvedEmail.substringBefore("@"),
+            avatarUrl = avatarUrl,
+        )
+    }
+
+    private suspend fun fetchAuthenticatedUserOrThrow(
+        authenticatedUser: AuthenticatedUserContext,
+        accessToken: String,
+    ) = supabaseGateway.fetchAuthenticatedUser(accessToken).getOrElse { error ->
+        when (error) {
+            is UnauthorizedException -> {
+                log.warn("[USER] token validation failed during auth profile fallback: {}", error.message)
+                throw error
+            }
+
+            else -> {
+                log.error("[USER] unexpected Supabase auth lookup failure", error)
+                throw UpstreamFailureException("Unable to resolve authenticated user profile")
             }
         }
+    }.also { fetchedUser ->
         if (fetchedUser.id != authenticatedUser.userId) {
             log.warn(
                 "[USER] authenticated user mismatch between JWT and Supabase lookup jwtUserId={} supabaseUserId={}",
@@ -175,15 +201,53 @@ class UserProfileService(
             )
             throw UnauthorizedException("Invalid or expired access token")
         }
-
-        return fetchedUser.email?.trim()?.takeIf { it.isNotBlank() }
-            ?: throw IllegalArgumentException("authenticated user email is required")
     }
 
-    private fun RegisterUserProfileInput.toServerProfile(tokenEmail: String, now: Long): UserProfileEntity = UserProfileEntity(
+    private suspend fun maybeBackfillExistingProfileIdentity(
+        accessToken: String,
+        userId: String,
+        authenticatedProfile: ResolvedAuthenticatedProfile,
+        now: Long,
+    ) {
+        val existingProfile = supabaseGateway.fetchUserProfileIdentity(accessToken, userId).getOrElse { error ->
+            throw UpstreamFailureException("Unable to read existing user profile: ${error.message}")
+        } ?: throw UpstreamFailureException("Unable to read existing user profile")
+
+        val nameUpdate = authenticatedProfile.name.takeIf { existingProfile.name.isBlank() }
+        val emailUpdate = authenticatedProfile.email.takeIf { existingProfile.email.isBlank() }
+        val avatarUpdate = authenticatedProfile.avatarUrl?.takeIf { existingProfile.avatarUrl.isNullOrBlank() }
+
+        if (nameUpdate == null && emailUpdate == null && avatarUpdate == null) {
+            return
+        }
+
+        supabaseGateway.updateUserProfileIdentity(
+            accessToken = accessToken,
+            userId = userId,
+            name = nameUpdate,
+            email = emailUpdate,
+            avatarUrl = avatarUpdate,
+            lastModifiedAt = now,
+        ).getOrElse { error ->
+            throw UpstreamFailureException("Unable to update user profile identity: ${error.message}")
+        }
+        log.info(
+            "[USER] backfilled existing profile identity userId={} updatedName={} updatedEmail={} updatedAvatar={}",
+            userId,
+            nameUpdate != null,
+            emailUpdate != null,
+            avatarUpdate != null
+        )
+    }
+
+    private fun RegisterUserProfileInput.toServerProfile(
+        authenticatedProfile: ResolvedAuthenticatedProfile,
+        now: Long,
+    ): UserProfileEntity = UserProfileEntity(
         id = UUID.randomUUID().toString(),
-        name = name.trim().ifBlank { tokenEmail.substringBefore("@") },
-        email = tokenEmail,
+        name = authenticatedProfile.name,
+        email = authenticatedProfile.email,
+        avatarUrl = authenticatedProfile.avatarUrl,
         birthDate = birthDate.trim(),
         sex = sex.trim(),
         heightCm = heightCm,
@@ -226,4 +290,14 @@ class UserProfileService(
         createdAt = now,
         lastModifiedAt = now,
     )
+}
+
+private data class ResolvedAuthenticatedProfile(
+    val email: String,
+    val name: String,
+    val avatarUrl: String?,
+)
+
+private fun String?.normalizeOptionalField(): String? {
+    return this?.trim()?.ifBlank { null }
 }

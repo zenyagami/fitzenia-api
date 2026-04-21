@@ -1,7 +1,6 @@
 package com.zenthek.service
 
 import com.zenthek.model.FoodItem
-import com.zenthek.upstream.fatsecret.FatSecretClient
 import com.zenthek.upstream.openfoodfacts.OpenFoodFactsClient
 import com.zenthek.upstream.usda.UsdaClient
 import kotlinx.coroutines.async
@@ -9,7 +8,6 @@ import kotlinx.coroutines.coroutineScope
 
 class FoodService(
     private val offClient: OpenFoodFactsClient,
-    private val fsClient: FatSecretClient,
     private val usdaClient: UsdaClient
 ) {
     suspend fun getByBarcode(barcode: String): FoodItem? {
@@ -31,14 +29,6 @@ class FoodService(
             lastException = e
         }
 
-        // 3. Try FatSecret
-        try {
-            val fsResult = fsClient.getByBarcode(barcode)
-            if (fsResult != null) return fsResult
-        } catch (e: Exception) {
-            lastException = e
-        }
-
         // If all threw exceptions
         if (lastException != null) {
             throw UpstreamFailureException("All upstream APIs failed during barcode lookup: ${lastException.message}")
@@ -50,9 +40,8 @@ class FoodService(
 
     suspend fun autocomplete(query: String, limit: Int): List<String> = coroutineScope {
         val offDeferred = async { runCatching { offClient.autocomplete(query, limit) }.getOrDefault(emptyList()) }
-        val fsDeferred = async { runCatching { fsClient.autocomplete(query, limit) }.getOrDefault(emptyList()) }
 
-        (offDeferred.await() + fsDeferred.await())
+        (offDeferred.await())
             .distinct()
             .take(limit)
     }

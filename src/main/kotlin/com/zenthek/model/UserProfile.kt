@@ -7,6 +7,7 @@ data class UserProfileEntity(
     val id: String,
     val name: String,
     val email: String,
+    val avatarUrl: String? = null,
     val birthDate: String,
     val sex: String,
     val heightCm: Double,
@@ -73,7 +74,6 @@ data class CalorieTargetEntity(
 
 @Serializable
 data class RegisterUserProfileInput(
-    val name: String,
     val birthDate: String,
     val sex: String,
     val heightCm: Double,

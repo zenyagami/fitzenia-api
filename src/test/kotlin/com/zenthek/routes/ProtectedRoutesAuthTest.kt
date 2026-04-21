@@ -26,10 +26,9 @@ import com.zenthek.model.InsertCanonicalFoodsResult
 import com.zenthek.service.FoodService
 import com.zenthek.service.SmartSearchOrchestrator
 import com.zenthek.service.UserProfileService
-import com.zenthek.upstream.fatsecret.FatSecretClient
-import com.zenthek.upstream.fatsecret.FatSecretTokenManager
 import com.zenthek.upstream.openfoodfacts.OpenFoodFactsClient
 import com.zenthek.upstream.supabase.CanonicalCatalogGateway
+import com.zenthek.upstream.supabase.ExistingUserProfileIdentity
 import com.zenthek.upstream.supabase.SupabaseAuthenticatedUser
 import com.zenthek.upstream.supabase.SupabaseGateway
 import com.zenthek.upstream.usda.UsdaClient
@@ -179,10 +178,8 @@ class ProtectedRoutesAuthTest {
             supabaseServiceRoleKey = null,
         )
         val offClient = OpenFoodFactsClient(httpClient)
-        val tokenManager = FatSecretTokenManager(httpClient, apiKeys)
-        val fsClient = FatSecretClient(httpClient, tokenManager)
         val usdaClient = UsdaClient(httpClient, apiKeys.usdaApiKey)
-        return FoodService(offClient, fsClient, usdaClient)
+        return FoodService(offClient, usdaClient)
     }
 
     /**
@@ -284,6 +281,19 @@ private class AuthOnlySupabaseGateway : SupabaseGateway {
     }
 
     override suspend fun profileExists(accessToken: String, userId: String): Result<Boolean> = Result.success(false)
+
+    override suspend fun fetchUserProfileIdentity(accessToken: String, userId: String): Result<ExistingUserProfileIdentity?> {
+        return Result.success(null)
+    }
+
+    override suspend fun updateUserProfileIdentity(
+        accessToken: String,
+        userId: String,
+        name: String?,
+        email: String?,
+        avatarUrl: String?,
+        lastModifiedAt: Long,
+    ): Result<Unit> = Result.success(Unit)
 
     override suspend fun userGoalExists(accessToken: String, userId: String): Result<Boolean> = Result.success(false)
 

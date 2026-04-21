@@ -16,9 +16,7 @@ import com.zenthek.upstream.supabase.CanonicalCatalogClient
 import com.zenthek.upstream.supabase.CanonicalCatalogGateway
 import com.zenthek.upstream.supabase.SupabaseClient
 import com.zenthek.upstream.openai.OpenAiApiService
-import com.zenthek.upstream.fatsecret.FatSecretClient
 import com.zenthek.upstream.gemini.GeminiApiService
-import com.zenthek.upstream.fatsecret.FatSecretTokenManager
 import com.zenthek.upstream.openfoodfacts.OpenFoodFactsClient
 import com.zenthek.upstream.usda.UsdaClient
 import io.ktor.client.*
@@ -63,8 +61,6 @@ fun Application.module() {
     val httpClient = buildHttpClient()
 
     val offClient = OpenFoodFactsClient(httpClient)
-    val fsTokenManager = FatSecretTokenManager(httpClient, config.apiKeys)
-    val fsClient = FatSecretClient(httpClient, fsTokenManager)
     val usdaClient = UsdaClient(httpClient, config.apiKeys.usdaApiKey)
     val imageAnalyzer: ImageAnalyzer = if (config.useGeminiForAiImage) {
         log.info("Image analysis backend: Gemini Flash")
@@ -74,7 +70,7 @@ fun Application.module() {
         OpenAiApiService(httpClient, config.apiKeys.openAiApiKey)
     }
 
-    val foodService = FoodService(offClient, fsClient, usdaClient)
+    val foodService = FoodService(offClient, usdaClient)
     val supabaseClient = SupabaseClient(httpClient, config.supabase)
     val userProfileService = UserProfileService(supabaseClient)
 

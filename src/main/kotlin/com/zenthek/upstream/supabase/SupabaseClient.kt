@@ -7,9 +7,11 @@ import com.zenthek.model.UserGoalEntity
 import com.zenthek.service.UnauthorizedException
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
+import io.ktor.client.statement.bodyAsText
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.get
 import io.ktor.client.request.header
+import io.ktor.client.request.patch
 import io.ktor.client.request.parameter
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
@@ -20,16 +22,37 @@ import io.ktor.http.contentType
 import io.ktor.http.isSuccess
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import org.slf4j.LoggerFactory
 
 data class SupabaseAuthenticatedUser(
     val id: String,
     val email: String?,
+    val name: String? = null,
+    val avatarUrl: String? = null,
+)
+
+data class ExistingUserProfileIdentity(
+    val id: String,
+    val name: String,
+    val email: String,
+    val avatarUrl: String?,
 )
 
 interface SupabaseGateway {
     suspend fun fetchAuthenticatedUser(accessToken: String): Result<SupabaseAuthenticatedUser>
     suspend fun profileExists(accessToken: String, userId: String): Result<Boolean>
+    suspend fun fetchUserProfileIdentity(accessToken: String, userId: String): Result<ExistingUserProfileIdentity?>
+    suspend fun updateUserProfileIdentity(
+        accessToken: String,
+        userId: String,
+        name: String?,
+        email: String?,
+        avatarUrl: String?,
+        lastModifiedAt: Long,
+    ): Result<Unit>
     suspend fun userGoalExists(accessToken: String, userId: String): Result<Boolean>
     suspend fun calorieTargetExists(accessToken: String, userId: String): Result<Boolean>
     suspend fun insertUserProfile(accessToken: String, userId: String, profile: UserProfileEntity): Result<Unit>
@@ -42,6 +65,7 @@ class SupabaseClient(
     private val config: SupabaseConfig,
 ) : SupabaseGateway {
     private val log = LoggerFactory.getLogger(SupabaseClient::class.java)
+    private val authUserJson = Json { ignoreUnknownKeys = true }
 
     private val normalizedBaseUrl = config.url.trimEnd('/')
 
@@ -64,12 +88,32 @@ class SupabaseClient(
             }
         }
 
-        val user = response.body<SupabaseUserDto>()
+        val responseText = response.bodyAsText()
+        val user = authUserJson.decodeFromString(SupabaseUserDto.serializer(), responseText)
         if (user.id.isBlank()) {
             throw UnauthorizedException("Invalid access token subject")
         }
         log.info("[SUPABASE] access token valid userId={}", user.id)
-        SupabaseAuthenticatedUser(id = user.id, email = user.email)
+        val nameField = listOfNotNull(
+            user.userMetadata.name.normalizeOptionalField()?.let { ResolvedAuthField(it, "user_metadata.name") },
+            user.userMetadata.fullName.normalizeOptionalField()?.let { ResolvedAuthField(it, "user_metadata.full_name") },
+        ).firstOrNull() ?: user.identities.firstResolvedField { identityData, prefix ->
+            identityData.name.normalizeOptionalField()?.let { ResolvedAuthField(it, "$prefix.name") }
+                ?: identityData.fullName.normalizeOptionalField()?.let { ResolvedAuthField(it, "$prefix.full_name") }
+        }
+        val avatarField = listOfNotNull(
+            user.userMetadata.avatarUrl.normalizeOptionalField()?.let { ResolvedAuthField(it, "user_metadata.avatar_url") },
+            user.userMetadata.picture.normalizeOptionalField()?.let { ResolvedAuthField(it, "user_metadata.picture") },
+        ).firstOrNull() ?: user.identities.firstResolvedField { identityData, prefix ->
+            identityData.avatarUrl.normalizeOptionalField()?.let { ResolvedAuthField(it, "$prefix.avatar_url") }
+                ?: identityData.picture.normalizeOptionalField()?.let { ResolvedAuthField(it, "$prefix.picture") }
+        }
+        SupabaseAuthenticatedUser(
+            id = user.id,
+            email = user.email.normalizeOptionalField(),
+            name = nameField?.value,
+            avatarUrl = avatarField?.value,
+        )
     }
 
     override suspend fun profileExists(accessToken: String, userId: String): Result<Boolean> = existsInTable(
@@ -78,6 +122,59 @@ class SupabaseClient(
         userId = userId,
         label = "profile"
     )
+
+    override suspend fun fetchUserProfileIdentity(accessToken: String, userId: String): Result<ExistingUserProfileIdentity?> = runCatching {
+        log.info("[SUPABASE] fetching user_profile identity userId={}", userId)
+        val response = httpClient.get("$normalizedBaseUrl/rest/v1/user_profile") {
+            applyUserScopedAuth(accessToken)
+            parameter("select", "id,name,email,avatar_url")
+            parameter("user_id", "eq.$userId")
+            parameter("limit", 1)
+        }
+
+        if (!response.status.isSuccess()) {
+            log.error("[SUPABASE] user_profile identity fetch failed userId={} status={}", userId, response.status.value)
+            throw IllegalStateException("Supabase user_profile identity fetch failed with ${response.status.value}")
+        }
+
+        response.body<List<SupabaseUserProfileIdentityDto>>().firstOrNull()?.toModel()
+    }
+
+    override suspend fun updateUserProfileIdentity(
+        accessToken: String,
+        userId: String,
+        name: String?,
+        email: String?,
+        avatarUrl: String?,
+        lastModifiedAt: Long,
+    ): Result<Unit> = runCatching {
+        val body = buildJsonObject {
+            name?.let { put("name", it) }
+            email?.let { put("email", it) }
+            avatarUrl?.let { put("avatar_url", it) }
+            put("last_modified_at", lastModifiedAt)
+        }
+        log.info(
+            "[SUPABASE] updating user_profile identity userId={} updateName={} updateEmail={} updateAvatar={}",
+            userId,
+            name != null,
+            email != null,
+            avatarUrl != null
+        )
+        val response = httpClient.patch("$normalizedBaseUrl/rest/v1/user_profile") {
+            applyUserScopedAuth(accessToken)
+            header(HttpHeaders.Prefer, "return=minimal")
+            contentType(ContentType.Application.Json)
+            parameter("user_id", "eq.$userId")
+            setBody(body)
+        }
+
+        if (!response.status.isSuccess()) {
+            log.error("[SUPABASE] user_profile identity update failed userId={} status={}", userId, response.status.value)
+            throw IllegalStateException("Supabase user_profile identity update failed with ${response.status.value}")
+        }
+        log.info("[SUPABASE] user_profile identity update success userId={}", userId)
+    }
 
     override suspend fun userGoalExists(accessToken: String, userId: String): Result<Boolean> = existsInTable(
         tableName = "user_goal",
@@ -194,6 +291,7 @@ private fun UserProfileEntity.toInsertDto(userId: String): SupabaseInsertUserPro
     id = id,
     name = name,
     email = email,
+    avatarUrl = avatarUrl,
     birthDate = birthDate,
     sex = sex,
     heightCm = heightCm,
@@ -206,7 +304,44 @@ private fun UserProfileEntity.toInsertDto(userId: String): SupabaseInsertUserPro
 private data class SupabaseUserDto(
     val id: String,
     val email: String? = null,
+    @SerialName("user_metadata")
+    val userMetadata: SupabaseUserMetadataDto = SupabaseUserMetadataDto(),
+    val identities: List<SupabaseIdentityDto> = emptyList(),
 )
+
+@Serializable
+private data class SupabaseUserMetadataDto(
+    val name: String? = null,
+    @SerialName("full_name")
+    val fullName: String? = null,
+    @SerialName("avatar_url")
+    val avatarUrl: String? = null,
+    val picture: String? = null,
+)
+
+@Serializable
+private data class SupabaseIdentityDto(
+    val provider: String? = null,
+    @SerialName("identity_data")
+    val identityData: SupabaseUserMetadataDto? = null,
+)
+
+private data class ResolvedAuthField(
+    val value: String,
+    val source: String,
+)
+
+private inline fun List<SupabaseIdentityDto>.firstResolvedField(
+    resolve: (SupabaseUserMetadataDto, String) -> ResolvedAuthField?
+): ResolvedAuthField? {
+    forEachIndexed { index, identity ->
+        val metadata = identity.identityData ?: return@forEachIndexed
+        val provider = identity.provider?.ifBlank { null } ?: "unknown"
+        val prefix = "identities[$index:$provider].identity_data"
+        resolve(metadata, prefix)?.let { return it }
+    }
+    return null
+}
 
 @Serializable
 private data class SupabaseEntityIdDto(
@@ -214,10 +349,28 @@ private data class SupabaseEntityIdDto(
 )
 
 @Serializable
+private data class SupabaseUserProfileIdentityDto(
+    val id: String,
+    val name: String,
+    val email: String,
+    @SerialName("avatar_url")
+    val avatarUrl: String? = null,
+)
+
+private fun SupabaseUserProfileIdentityDto.toModel(): ExistingUserProfileIdentity = ExistingUserProfileIdentity(
+    id = id,
+    name = name,
+    email = email,
+    avatarUrl = avatarUrl,
+)
+
+@Serializable
 private data class SupabaseInsertUserProfileDto(
     val id: String,
     val name: String,
     val email: String,
+    @SerialName("avatar_url")
+    val avatarUrl: String? = null,
     @SerialName("birth_date")
     val birthDate: String,
     val sex: String,
@@ -230,6 +383,10 @@ private data class SupabaseInsertUserProfileDto(
     @SerialName("user_id")
     val userId: String,
 )
+
+private fun String?.normalizeOptionalField(): String? {
+    return this?.trim()?.ifBlank { null }
+}
 
 private fun UserGoalEntity.toInsertDto(userId: String): SupabaseInsertUserGoalDto = SupabaseInsertUserGoalDto(
     id = id,

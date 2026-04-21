@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS public.user_profile (
     id               TEXT PRIMARY KEY,
     name             TEXT NOT NULL,
     email            TEXT NOT NULL,
+    avatar_url       TEXT,
     birth_date       TEXT NOT NULL,
     sex              TEXT NOT NULL,
     height_cm        DOUBLE PRECISION NOT NULL,
@@ -72,6 +73,7 @@ CREATE POLICY "user_profile: update own rows"
     WITH CHECK (user_id = auth.uid());
 ```
 
+> `name`, `email`, and `avatar_url` are derived by the backend from the authenticated Supabase user during registration.  
 > **No `sync_status`** — this table is backend-written only; the client treats it as read-only after the initial registration sync.
 
 ---

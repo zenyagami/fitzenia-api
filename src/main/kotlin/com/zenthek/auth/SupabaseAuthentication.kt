@@ -1,5 +1,6 @@
 package com.zenthek.auth
 
+import com.auth0.jwt.interfaces.Claim
 import com.auth0.jwk.JwkProvider
 import com.auth0.jwk.JwkProviderBuilder
 import com.zenthek.config.SupabaseConfig
@@ -28,6 +29,8 @@ val SupabaseAccessTokenKey = AttributeKey<String>("SupabaseAccessToken")
 data class AuthenticatedUserContext(
     val userId: String,
     val email: String?,
+    val name: String? = null,
+    val avatarUrl: String? = null,
     val role: String,
 )
 
@@ -49,10 +52,13 @@ fun Application.configureAuthentication(
                         if (!credential.payload.audience.contains("authenticated")) {
                             return@validate null
                         }
+                        val userMetadata = credential.payload.getClaim("user_metadata").toUserMetadata()
 
                         val context = createAuthenticatedUserContext(
                             userId = credential.payload.subject,
                             email = credential.payload.getClaim("email").asString(),
+                            name = userMetadata.name,
+                            avatarUrl = userMetadata.avatarUrl,
                             role = credential.payload.getClaim("role").asString(),
                         ) ?: return@validate null
 
@@ -75,6 +81,8 @@ fun Application.configureAuthentication(
                             val context = createAuthenticatedUserContext(
                                 userId = user.id,
                                 email = user.email,
+                                name = user.name,
+                                avatarUrl = user.avatarUrl,
                                 role = "authenticated",
                             ) ?: return@authenticate null
 
@@ -117,6 +125,8 @@ private fun extractBearerToken(authorizationHeader: String?): String? {
 private fun createAuthenticatedUserContext(
     userId: String?,
     email: String?,
+    name: String?,
+    avatarUrl: String?,
     role: String?,
 ): AuthenticatedUserContext? {
     if (userId.isNullOrBlank()) {
@@ -128,7 +138,30 @@ private fun createAuthenticatedUserContext(
 
     return AuthenticatedUserContext(
         userId = userId,
-        email = email?.trim()?.ifBlank { null },
+        email = email.normalizeOptionalField(),
+        name = name.normalizeOptionalField(),
+        avatarUrl = avatarUrl.normalizeOptionalField(),
         role = role,
     )
+}
+
+private data class JwtUserMetadata(
+    val name: String?,
+    val avatarUrl: String?,
+)
+
+private fun Claim.toUserMetadata(): JwtUserMetadata {
+    val metadata = asMap().orEmpty()
+    return JwtUserMetadata(
+        name = metadata.stringValueOrNull("name") ?: metadata.stringValueOrNull("full_name"),
+        avatarUrl = metadata.stringValueOrNull("avatar_url") ?: metadata.stringValueOrNull("picture"),
+    )
+}
+
+private fun Map<String, *>.stringValueOrNull(key: String): String? {
+    return (this[key] as? String).normalizeOptionalField()
+}
+
+private fun String?.normalizeOptionalField(): String? {
+    return this?.trim()?.ifBlank { null }
 }

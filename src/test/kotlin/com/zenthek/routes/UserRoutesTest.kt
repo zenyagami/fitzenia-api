@@ -2,10 +2,10 @@ package com.zenthek.routes
 
 import com.zenthek.auth.SUPABASE_AUTH_PROVIDER
 import com.zenthek.auth.TestJwksServer
+import com.zenthek.auth.configureAuthentication
 import com.zenthek.auth.createSupabaseAccessToken
 import com.zenthek.auth.createTestSupabaseConfig
 import com.zenthek.auth.generateTestRsaKeyPair
-import com.zenthek.auth.configureAuthentication
 import com.zenthek.fitzenio.rest.configureSerialization
 import com.zenthek.fitzenio.rest.configureStatusPages
 import com.zenthek.model.CalorieTargetEntity
@@ -18,6 +18,7 @@ import com.zenthek.model.RegistrationStatusResponse
 import com.zenthek.model.UserGoalEntity
 import com.zenthek.model.UserProfileEntity
 import com.zenthek.service.UserProfileService
+import com.zenthek.upstream.supabase.ExistingUserProfileIdentity
 import com.zenthek.upstream.supabase.SupabaseAuthenticatedUser
 import com.zenthek.upstream.supabase.SupabaseGateway
 import io.ktor.client.request.get
@@ -37,13 +38,14 @@ import kotlinx.serialization.json.Json
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class UserRoutesTest {
     private val json = Json { ignoreUnknownKeys = true }
 
     @Test
-    fun `register creates onboarding data and skips overwrite when already registered`() {
+    fun `register creates onboarding data from JWT metadata and skips overwrite when already registered`() {
         val keyPair = generateTestRsaKeyPair("user-routes")
         TestJwksServer(listOf(keyPair)).use { jwksServer ->
             val gateway = FakeSupabaseGateway(
@@ -51,13 +53,19 @@ class UserRoutesTest {
                 userGoalExistsInitially = false,
                 calorieTargetExistsInitially = false,
             )
-            val accessToken = createSupabaseAccessToken(baseUrl = jwksServer.baseUrl, keyPair = keyPair)
+            val accessToken = createSupabaseAccessToken(
+                baseUrl = jwksServer.baseUrl,
+                keyPair = keyPair,
+                userMetadata = mapOf(
+                    "name" to "Jwt User",
+                    "avatar_url" to "https://example.com/jwt.png",
+                ),
+            )
 
             testApplication {
                 installUserRoutesApp(jwksServer.baseUrl, gateway)
 
-                val payload = validRegisterRequest()
-                val requestJson = json.encodeToString(payload)
+                val requestJson = json.encodeToString(validRegisterRequest())
 
                 val firstResponse = client.post("/api/user/register") {
                     header(HttpHeaders.Authorization, "Bearer $accessToken")
@@ -71,8 +79,11 @@ class UserRoutesTest {
                 assertEquals(1, gateway.profileInsertCalls)
                 assertEquals(1, gateway.userGoalInsertCalls)
                 assertEquals(1, gateway.calorieTargetInsertCalls)
+                assertEquals(0, gateway.fetchAuthenticatedUserCalls)
                 assertEquals(accessToken, gateway.lastAccessToken)
                 assertEquals("test@example.com", gateway.lastInsertedProfile?.email)
+                assertEquals("Jwt User", gateway.lastInsertedProfile?.name)
+                assertEquals("https://example.com/jwt.png", gateway.lastInsertedProfile?.avatarUrl)
                 assertTrue(gateway.lastInsertedProfile?.id?.isNotBlank() == true)
                 assertTrue((gateway.lastInsertedProfile?.createdAt ?: 0L) > 0L)
                 assertTrue((gateway.lastInsertedProfile?.lastModifiedAt ?: 0L) > 0L)
@@ -94,19 +105,28 @@ class UserRoutesTest {
     }
 
     @Test
-    fun `register falls back to Supabase user lookup when JWT email is missing`() {
+    fun `register falls back to Supabase user lookup when JWT auth profile is missing or blank`() {
         val keyPair = generateTestRsaKeyPair("user-routes-fallback")
         TestJwksServer(listOf(keyPair)).use { jwksServer ->
             val gateway = FakeSupabaseGateway(
                 profileExistsInitially = false,
                 userGoalExistsInitially = false,
                 calorieTargetExistsInitially = false,
-                fetchedUser = SupabaseAuthenticatedUser(id = "user-1", email = "fallback@example.com"),
+                fetchedUser = SupabaseAuthenticatedUser(
+                    id = "user-1",
+                    email = "fallback@example.com",
+                    name = "Fallback User",
+                    avatarUrl = "https://example.com/fallback.png",
+                ),
             )
             val accessToken = createSupabaseAccessToken(
                 baseUrl = jwksServer.baseUrl,
                 keyPair = keyPair,
                 email = null,
+                userMetadata = mapOf(
+                    "name" to "   ",
+                    "avatar_url" to "",
+                ),
             )
 
             testApplication {
@@ -121,6 +141,174 @@ class UserRoutesTest {
                 assertEquals(HttpStatusCode.OK, response.status)
                 assertEquals(1, gateway.fetchAuthenticatedUserCalls)
                 assertEquals("fallback@example.com", gateway.lastInsertedProfile?.email)
+                assertEquals("Fallback User", gateway.lastInsertedProfile?.name)
+                assertEquals("https://example.com/fallback.png", gateway.lastInsertedProfile?.avatarUrl)
+            }
+        }
+    }
+
+    @Test
+    fun `register ignores legacy name in request and saves auth owned profile fields`() {
+        val keyPair = generateTestRsaKeyPair("user-routes-compat")
+        TestJwksServer(listOf(keyPair)).use { jwksServer ->
+            val gateway = FakeSupabaseGateway(
+                profileExistsInitially = false,
+                userGoalExistsInitially = false,
+                calorieTargetExistsInitially = false,
+            )
+            val accessToken = createSupabaseAccessToken(
+                baseUrl = jwksServer.baseUrl,
+                keyPair = keyPair,
+                userMetadata = mapOf(
+                    "name" to "Token Name",
+                    "avatar_url" to "https://example.com/token.png",
+                ),
+            )
+
+            testApplication {
+                installUserRoutesApp(jwksServer.baseUrl, gateway)
+
+                val response = client.post("/api/user/register") {
+                    header(HttpHeaders.Authorization, "Bearer $accessToken")
+                    contentType(ContentType.Application.Json)
+                    setBody(legacyRegisterRequestJson("Legacy Client Name"))
+                }
+
+                assertEquals(HttpStatusCode.OK, response.status)
+                assertEquals(0, gateway.fetchAuthenticatedUserCalls)
+                assertEquals("Token Name", gateway.lastInsertedProfile?.name)
+                assertEquals("https://example.com/token.png", gateway.lastInsertedProfile?.avatarUrl)
+            }
+        }
+    }
+
+    @Test
+    fun `register falls back to email local part when auth name is unavailable`() {
+        val keyPair = generateTestRsaKeyPair("user-routes-email-name-fallback")
+        TestJwksServer(listOf(keyPair)).use { jwksServer ->
+            val gateway = FakeSupabaseGateway(
+                profileExistsInitially = false,
+                userGoalExistsInitially = false,
+                calorieTargetExistsInitially = false,
+                fetchedUser = SupabaseAuthenticatedUser(
+                    id = "user-1",
+                    email = "localpart@example.com",
+                    name = "   ",
+                    avatarUrl = "   ",
+                ),
+            )
+            val accessToken = createSupabaseAccessToken(
+                baseUrl = jwksServer.baseUrl,
+                keyPair = keyPair,
+                email = "localpart@example.com",
+            )
+
+            testApplication {
+                installUserRoutesApp(jwksServer.baseUrl, gateway)
+
+                val response = client.post("/api/user/register") {
+                    header(HttpHeaders.Authorization, "Bearer $accessToken")
+                    contentType(ContentType.Application.Json)
+                    setBody(json.encodeToString(validRegisterRequest()))
+                }
+
+                assertEquals(HttpStatusCode.OK, response.status)
+                assertEquals(1, gateway.fetchAuthenticatedUserCalls)
+                assertEquals("localpart@example.com", gateway.lastInsertedProfile?.email)
+                assertEquals("localpart", gateway.lastInsertedProfile?.name)
+                assertNull(gateway.lastInsertedProfile?.avatarUrl)
+            }
+        }
+    }
+
+    @Test
+    fun `re register backfills missing name email and avatar on existing profile`() {
+        val keyPair = generateTestRsaKeyPair("user-routes-backfill-existing")
+        TestJwksServer(listOf(keyPair)).use { jwksServer ->
+            val gateway = FakeSupabaseGateway(
+                profileExistsInitially = true,
+                userGoalExistsInitially = true,
+                calorieTargetExistsInitially = true,
+                existingProfileIdentity = ExistingUserProfileIdentity(
+                    id = "profile-existing",
+                    name = "",
+                    email = "",
+                    avatarUrl = null,
+                ),
+            )
+            val accessToken = createSupabaseAccessToken(
+                baseUrl = jwksServer.baseUrl,
+                keyPair = keyPair,
+                email = "backfilled@example.com",
+                userMetadata = mapOf(
+                    "name" to "Backfilled Name",
+                    "avatar_url" to "https://example.com/backfilled.png",
+                ),
+            )
+
+            testApplication {
+                installUserRoutesApp(jwksServer.baseUrl, gateway)
+
+                val response = client.post("/api/user/register") {
+                    header(HttpHeaders.Authorization, "Bearer $accessToken")
+                    contentType(ContentType.Application.Json)
+                    setBody(json.encodeToString(validRegisterRequest()))
+                }
+
+                assertEquals(HttpStatusCode.OK, response.status)
+                val payload = json.decodeFromString<RegisterUserResponse>(response.bodyAsText())
+                assertEquals("already_registered", payload.status)
+                assertEquals(0, gateway.profileInsertCalls)
+                assertEquals(1, gateway.profileIdentityFetchCalls)
+                assertEquals(1, gateway.profileIdentityUpdateCalls)
+                assertEquals("Backfilled Name", gateway.existingProfileIdentity?.name)
+                assertEquals("backfilled@example.com", gateway.existingProfileIdentity?.email)
+                assertEquals("https://example.com/backfilled.png", gateway.existingProfileIdentity?.avatarUrl)
+            }
+        }
+    }
+
+    @Test
+    fun `re register skips identity update when existing profile already has name and avatar`() {
+        val keyPair = generateTestRsaKeyPair("user-routes-skip-existing")
+        TestJwksServer(listOf(keyPair)).use { jwksServer ->
+            val gateway = FakeSupabaseGateway(
+                profileExistsInitially = true,
+                userGoalExistsInitially = true,
+                calorieTargetExistsInitially = true,
+                existingProfileIdentity = ExistingUserProfileIdentity(
+                    id = "profile-existing",
+                    name = "Existing Name",
+                    email = "existing@example.com",
+                    avatarUrl = "https://example.com/existing.png",
+                ),
+            )
+            val accessToken = createSupabaseAccessToken(
+                baseUrl = jwksServer.baseUrl,
+                keyPair = keyPair,
+                email = "new@example.com",
+                userMetadata = mapOf(
+                    "name" to "New Token Name",
+                    "avatar_url" to "https://example.com/new.png",
+                ),
+            )
+
+            testApplication {
+                installUserRoutesApp(jwksServer.baseUrl, gateway)
+
+                val response = client.post("/api/user/register") {
+                    header(HttpHeaders.Authorization, "Bearer $accessToken")
+                    contentType(ContentType.Application.Json)
+                    setBody(json.encodeToString(validRegisterRequest()))
+                }
+
+                assertEquals(HttpStatusCode.OK, response.status)
+                assertEquals(0, gateway.profileInsertCalls)
+                assertEquals(1, gateway.profileIdentityFetchCalls)
+                assertEquals(0, gateway.profileIdentityUpdateCalls)
+                assertEquals("Existing Name", gateway.existingProfileIdentity?.name)
+                assertEquals("existing@example.com", gateway.existingProfileIdentity?.email)
+                assertEquals("https://example.com/existing.png", gateway.existingProfileIdentity?.avatarUrl)
             }
         }
     }
@@ -142,7 +330,7 @@ class UserRoutesTest {
                 val response = client.post("/api/user/register") {
                     header(HttpHeaders.Authorization, "Bearer $accessToken")
                     contentType(ContentType.Application.Json)
-                    setBody("""{"userProfile":{"name":"Test User","birthDate":"","sex":"female","heightCm":170.0},"userGoal":{"id":"g","goalDirection":"LOSE","targetPhase":"PHASE","goalWeightKg":70.0,"paceTier":"MODERATE","activityLevel":"LIGHT","bodyFatPercent":20.0,"bodyFatRangeKey":"TIER_3","exerciseFrequency":"ONE_TO_THREE","stepsActivityBand":"SEDENTARY","liftingExperience":"NONE","proteinPreference":"MODERATE"},"calorieTarget":{"id":"c","formula":"MIFLIN","bmrKcal":1600,"tdeeKcal":2200,"targetKcal":1900,"targetMinKcal":1800,"targetMaxKcal":2000,"macroMode":"BALANCED","proteinTargetG":150,"carbsTargetG":180,"fatTargetG":60,"appliedPaceTier":"MODERATE","floorClamped":0,"warning":null}}""")
+                    setBody("""{"userProfile":{"birthDate":"","sex":"female","heightCm":170.0},"userGoal":{"id":"g","goalDirection":"LOSE","targetPhase":"PHASE","goalWeightKg":70.0,"paceTier":"MODERATE","activityLevel":"LIGHT","bodyFatPercent":20.0,"bodyFatRangeKey":"TIER_3","exerciseFrequency":"ONE_TO_THREE","stepsActivityBand":"SEDENTARY","liftingExperience":"NONE","proteinPreference":"MODERATE"},"calorieTarget":{"id":"c","formula":"MIFLIN","bmrKcal":1600,"tdeeKcal":2200,"targetKcal":1900,"targetMinKcal":1800,"targetMaxKcal":2000,"macroMode":"BALANCED","proteinTargetG":150,"carbsTargetG":180,"fatTargetG":60,"appliedPaceTier":"MODERATE","floorClamped":0,"warning":null}}""")
                 }
 
                 assertEquals(HttpStatusCode.BadRequest, response.status)
@@ -247,7 +435,6 @@ class UserRoutesTest {
 
     private fun validRegisterRequest() = RegisterUserRequest(
         userProfile = RegisterUserProfileInput(
-            name = "Test User",
             birthDate = "1990-01-01",
             sex = "female",
             heightCm = 168.0,
@@ -283,15 +470,37 @@ class UserRoutesTest {
             warning = null,
         ),
     )
+
+    private fun legacyRegisterRequestJson(legacyName: String): String {
+        return """
+            {
+              "userProfile":{"name":"$legacyName","birthDate":"1990-01-01","sex":"female","heightCm":168.0},
+              "userGoal":{"id":"","goalDirection":"LOSE","targetPhase":"CUT","goalWeightKg":62.0,"paceTier":"MODERATE","activityLevel":"LIGHT","bodyFatPercent":20.0,"bodyFatRangeKey":"TIER_3","exerciseFrequency":"ONE_TO_THREE","stepsActivityBand":"SEDENTARY","liftingExperience":"NONE","proteinPreference":"MODERATE"},
+              "calorieTarget":{"id":"","formula":"MIFLIN","bmrKcal":1500,"tdeeKcal":2100,"targetKcal":1800,"targetMinKcal":1700,"targetMaxKcal":1900,"macroMode":"BALANCED","proteinTargetG":130,"carbsTargetG":180,"fatTargetG":55,"appliedPaceTier":"MODERATE","floorClamped":0,"warning":null}
+            }
+        """.trimIndent()
+    }
 }
 
 private class FakeSupabaseGateway(
     profileExistsInitially: Boolean,
     userGoalExistsInitially: Boolean,
     calorieTargetExistsInitially: Boolean,
+    var existingProfileIdentity: ExistingUserProfileIdentity? = if (profileExistsInitially) {
+        ExistingUserProfileIdentity(
+            id = "profile-existing",
+            name = "Existing Name",
+            email = "existing@example.com",
+            avatarUrl = "https://example.com/existing.png",
+        )
+    } else {
+        null
+    },
     private val fetchedUser: SupabaseAuthenticatedUser = SupabaseAuthenticatedUser(id = "user-1", email = "test@example.com"),
 ) : SupabaseGateway {
     var profileInsertCalls = 0
+    var profileIdentityFetchCalls = 0
+    var profileIdentityUpdateCalls = 0
     var userGoalInsertCalls = 0
     var calorieTargetInsertCalls = 0
     var fetchAuthenticatedUserCalls = 0
@@ -314,6 +523,31 @@ private class FakeSupabaseGateway(
         return Result.success(profileExists)
     }
 
+    override suspend fun fetchUserProfileIdentity(accessToken: String, userId: String): Result<ExistingUserProfileIdentity?> {
+        profileIdentityFetchCalls += 1
+        lastAccessToken = accessToken
+        return Result.success(existingProfileIdentity)
+    }
+
+    override suspend fun updateUserProfileIdentity(
+        accessToken: String,
+        userId: String,
+        name: String?,
+        email: String?,
+        avatarUrl: String?,
+        lastModifiedAt: Long,
+    ): Result<Unit> {
+        profileIdentityUpdateCalls += 1
+        lastAccessToken = accessToken
+        val current = existingProfileIdentity ?: return Result.failure(IllegalStateException("missing existing profile"))
+        existingProfileIdentity = current.copy(
+            name = name ?: current.name,
+            email = email ?: current.email,
+            avatarUrl = avatarUrl ?: current.avatarUrl,
+        )
+        return Result.success(Unit)
+    }
+
     override suspend fun userGoalExists(accessToken: String, userId: String): Result<Boolean> {
         lastAccessToken = accessToken
         return Result.success(userGoalExists)
@@ -329,6 +563,12 @@ private class FakeSupabaseGateway(
         lastInsertedProfile = profile
         lastAccessToken = accessToken
         profileExists = true
+        existingProfileIdentity = ExistingUserProfileIdentity(
+            id = profile.id,
+            name = profile.name,
+            email = profile.email,
+            avatarUrl = profile.avatarUrl,
+        )
         return Result.success(Unit)
     }
 

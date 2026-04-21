@@ -3,6 +3,7 @@ package com.zenthek.auth
 import com.zenthek.config.SupabaseJwtVerificationMode
 import com.zenthek.fitzenio.rest.configureSerialization
 import com.zenthek.fitzenio.rest.configureStatusPages
+import com.zenthek.upstream.supabase.ExistingUserProfileIdentity
 import com.zenthek.upstream.supabase.SupabaseAuthenticatedUser
 import com.zenthek.upstream.supabase.SupabaseGateway
 import io.ktor.client.request.get
@@ -28,6 +29,10 @@ class SupabaseAuthenticationTest {
             val accessToken = createSupabaseAccessToken(
                 baseUrl = jwksServer.baseUrl,
                 keyPair = secondaryKey,
+                userMetadata = mapOf(
+                    "full_name" to "JWT User",
+                    "picture" to "https://example.com/jwt.png",
+                ),
             )
 
             testApplication {
@@ -38,7 +43,7 @@ class SupabaseAuthenticationTest {
                 }
 
                 assertEquals(HttpStatusCode.OK, response.status)
-                assertEquals("user-1", response.bodyAsText())
+                assertEquals("user-1|JWT User|https://example.com/jwt.png", response.bodyAsText())
             }
         }
     }
@@ -79,7 +84,14 @@ class SupabaseAuthenticationTest {
         val gateway = object : SupabaseGateway by NoOpSupabaseGateway() {
             override suspend fun fetchAuthenticatedUser(accessToken: String): Result<SupabaseAuthenticatedUser> {
                 assertEquals("remote-valid-token", accessToken)
-                return Result.success(SupabaseAuthenticatedUser(id = "user-remote", email = "remote@example.com"))
+                return Result.success(
+                    SupabaseAuthenticatedUser(
+                        id = "user-remote",
+                        email = "remote@example.com",
+                        name = "Remote User",
+                        avatarUrl = "https://example.com/remote.png",
+                    )
+                )
             }
         }
 
@@ -96,7 +108,7 @@ class SupabaseAuthenticationTest {
                         get("/me") {
                             val user = call.requireAuthenticatedUser()
                             val token = call.requireBearerAccessToken()
-                            call.respondText("${user.userId}|$token")
+                            call.respondText("${user.userId}|${user.name}|${user.avatarUrl}|$token")
                         }
                     }
                 }
@@ -107,7 +119,10 @@ class SupabaseAuthenticationTest {
             }
 
             assertEquals(HttpStatusCode.OK, response.status)
-            assertEquals("user-remote|remote-valid-token", response.bodyAsText())
+            assertEquals(
+                "user-remote|Remote User|https://example.com/remote.png|remote-valid-token",
+                response.bodyAsText()
+            )
         }
     }
 
@@ -152,7 +167,8 @@ class SupabaseAuthenticationTest {
             routing {
                 authenticate(SUPABASE_AUTH_PROVIDER) {
                     get("/me") {
-                        call.respondText(call.requireAuthenticatedUser().userId)
+                        val user = call.requireAuthenticatedUser()
+                        call.respondText("${user.userId}|${user.name}|${user.avatarUrl}")
                     }
                 }
             }
@@ -166,6 +182,19 @@ private class NoOpSupabaseGateway : SupabaseGateway {
     }
 
     override suspend fun profileExists(accessToken: String, userId: String): Result<Boolean> = Result.success(false)
+
+    override suspend fun fetchUserProfileIdentity(accessToken: String, userId: String): Result<ExistingUserProfileIdentity?> {
+        return Result.success(null)
+    }
+
+    override suspend fun updateUserProfileIdentity(
+        accessToken: String,
+        userId: String,
+        name: String?,
+        email: String?,
+        avatarUrl: String?,
+        lastModifiedAt: Long,
+    ): Result<Unit> = Result.success(Unit)
 
     override suspend fun userGoalExists(accessToken: String, userId: String): Result<Boolean> = Result.success(false)
 
