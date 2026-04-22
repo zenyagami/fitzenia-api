@@ -174,6 +174,41 @@ CREATE POLICY "calorie_target: update own rows"
 
 ---
 
+### `calorie_target_history`
+
+Append-only log of past calorie targets per user. One row is inserted whenever the active `calorie_target` changes. Written by the backend only.
+
+```sql
+CREATE TABLE IF NOT EXISTS public.calorie_target_history (
+    id               TEXT PRIMARY KEY,
+    user_id          UUID NOT NULL,
+    effective_from   TEXT NOT NULL,
+    target_min_kcal  BIGINT NOT NULL,
+    target_max_kcal  BIGINT NOT NULL,
+    target_kcal      BIGINT NOT NULL,
+    bmr_kcal         BIGINT NOT NULL,
+    tdee_kcal        BIGINT NOT NULL,
+    formula          TEXT NOT NULL,
+    macro_mode       TEXT NOT NULL,
+    protein_target_g BIGINT NOT NULL,
+    carbs_target_g   BIGINT NOT NULL,
+    fat_target_g     BIGINT NOT NULL,
+    applied_pace_tier TEXT NOT NULL,
+    floor_clamped    BIGINT NOT NULL DEFAULT 0,
+    warning          TEXT,
+    created_at       BIGINT NOT NULL
+);
+
+ALTER TABLE public.calorie_target_history ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "calorie_target_history: select own rows"
+    ON public.calorie_target_history
+    FOR SELECT
+    USING (user_id = auth.uid());
+```
+
+---
+
 ### `weight_entry`
 
 Client-synced. One row per weight log entry.
@@ -185,8 +220,8 @@ CREATE TABLE IF NOT EXISTS public.weight_entry (
     weight_kg        DOUBLE PRECISION NOT NULL,
     note             TEXT,
     created_at       BIGINT NOT NULL,
-    is_deleted       BIGINT NOT NULL DEFAULT 0,
-    sync_status      TEXT NOT NULL,
+    body_fat_percent DOUBLE PRECISION,
+    source           TEXT NOT NULL DEFAULT 'MANUAL',
     user_id          UUID NOT NULL DEFAULT auth.uid()
 );
 
@@ -228,8 +263,8 @@ CREATE TABLE IF NOT EXISTS public.diary_entry (
     updated_at             BIGINT NOT NULL,
     last_modified_at       BIGINT NOT NULL,
     is_health_synced       BIGINT NOT NULL DEFAULT 0,
-    is_deleted             BIGINT NOT NULL DEFAULT 0,
-    sync_status            TEXT NOT NULL,
+    aggregate_id           TEXT,
+    image_url              TEXT,
     user_id                UUID NOT NULL DEFAULT auth.uid()
 );
 
@@ -260,8 +295,7 @@ CREATE TABLE IF NOT EXISTS public.diary_entry_ingredient (
     carbs_g               DOUBLE PRECISION NOT NULL,
     fat_g                 DOUBLE PRECISION NOT NULL,
     fiber_g               DOUBLE PRECISION,
-    is_deleted            BIGINT NOT NULL DEFAULT 0,
-    sync_status           TEXT NOT NULL,
+    quantity              NUMERIC NOT NULL DEFAULT 1.0,
     user_id               UUID NOT NULL DEFAULT auth.uid()
 );
 
@@ -287,7 +321,6 @@ CREATE TABLE IF NOT EXISTS public.food_item (
     source_type              TEXT NOT NULL,
     api_source               TEXT,
     image_url                TEXT,
-    local_image_path         TEXT,
     serving_key              TEXT NOT NULL,
     serving_weight_g         DOUBLE PRECISION NOT NULL,
     serving_name             TEXT NOT NULL,
@@ -302,10 +335,10 @@ CREATE TABLE IF NOT EXISTS public.food_item (
     sugar_g                  DOUBLE PRECISION,
     saturated_fat_g          DOUBLE PRECISION,
     is_favorite              BIGINT NOT NULL DEFAULT 0,
-    is_deleted               BIGINT NOT NULL DEFAULT 0,
     created_at               BIGINT NOT NULL,
     updated_at               BIGINT NOT NULL,
-    sync_status              TEXT NOT NULL,
+    preferred_serving_key    TEXT,
+    preferred_quantity       DOUBLE PRECISION,
     user_id                  UUID NOT NULL DEFAULT auth.uid()
 );
 
@@ -353,16 +386,16 @@ Client-synced. User-created composite meals.
 
 ```sql
 CREATE TABLE IF NOT EXISTS public.my_meal (
-    id               TEXT PRIMARY KEY,
-    name             TEXT NOT NULL,
-    image_url        TEXT,
-    local_image_path TEXT,
-    is_favorite      BIGINT NOT NULL DEFAULT 0,
-    is_deleted       BIGINT NOT NULL DEFAULT 0,
-    created_at       BIGINT NOT NULL,
-    updated_at       BIGINT NOT NULL,
-    sync_status      TEXT NOT NULL,
-    user_id          UUID NOT NULL DEFAULT auth.uid()
+    id                    TEXT PRIMARY KEY,
+    name                  TEXT NOT NULL,
+    image_url             TEXT,
+    is_favorite           BIGINT NOT NULL DEFAULT 0,
+    created_at            BIGINT NOT NULL,
+    updated_at            BIGINT NOT NULL,
+    weight_grams          REAL NOT NULL DEFAULT 0,
+    serving_name_snapshot TEXT DEFAULT '1 portion',
+    selected_serving_key  TEXT NOT NULL DEFAULT 'default_portion',
+    user_id               UUID NOT NULL DEFAULT auth.uid()
 );
 
 ALTER TABLE public.my_meal ENABLE ROW LEVEL SECURITY;
@@ -392,8 +425,6 @@ CREATE TABLE IF NOT EXISTS public.my_meal_ingredient (
     carbs_g               DOUBLE PRECISION NOT NULL,
     fat_g                 DOUBLE PRECISION NOT NULL,
     fiber_g               DOUBLE PRECISION,
-    is_deleted            BIGINT NOT NULL DEFAULT 0,
-    sync_status           TEXT NOT NULL,
     user_id               UUID NOT NULL DEFAULT auth.uid()
 );
 
@@ -423,7 +454,9 @@ CREATE TABLE IF NOT EXISTS public.recent_food (
     carbs_g               DOUBLE PRECISION NOT NULL DEFAULT 0,
     fat_g                 DOUBLE PRECISION NOT NULL DEFAULT 0,
     last_used_at          BIGINT NOT NULL,
-    sync_status           TEXT NOT NULL DEFAULT 'PENDING',
+    aggregate_id          TEXT,
+    image_url             TEXT,
+    components_snapshot   TEXT,
     user_id               UUID NOT NULL DEFAULT auth.uid()
 );
 
@@ -432,6 +465,29 @@ ALTER TABLE public.recent_food ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "recent_food: owner access"
     ON public.recent_food
     USING (user_id = auth.uid());
+```
+
+---
+
+### `progress_photo`
+
+User progress photos stored in Supabase Storage. One row per photo upload; `pose` is constrained to the four canonical angles.
+
+```sql
+CREATE TABLE IF NOT EXISTS public.progress_photo (
+    id               UUID PRIMARY KEY,
+    user_id          UUID NOT NULL,
+    taken_date       DATE NOT NULL,
+    pose             TEXT NOT NULL CHECK (pose = ANY (ARRAY['FRONT', 'SIDE_LEFT', 'SIDE_RIGHT', 'BACK'])),
+    storage_path     TEXT NOT NULL,
+    image_url        TEXT NOT NULL,
+    width            INTEGER,
+    height           INTEGER,
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_modified_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+ALTER TABLE public.progress_photo ENABLE ROW LEVEL SECURITY;
 ```
 
 ---
@@ -479,7 +535,11 @@ CREATE TABLE IF NOT EXISTS public.canonical_food_serving (
     fiber_g           REAL,
     sodium_mg         REAL,
     sugar_g           REAL,
-    saturated_fat_g   REAL
+    saturated_fat_g   REAL,
+    cholesterol_mg    REAL,
+    potassium_mg      REAL,
+    calcium_mg        REAL,
+    iron_mg           REAL
 );
 
 ALTER TABLE public.canonical_food_serving ENABLE ROW LEVEL SECURITY;
@@ -541,14 +601,16 @@ See `db/migrations/001_canonical_food_catalog.sql` for the full function body an
 | `user_profile` | Backend only (`POST /api/user/register`) | No |
 | `user_goal` | Backend only (`POST /api/user/register`) | No |
 | `calorie_target` | Backend only (`POST /api/user/register`) | No |
-| `weight_entry` | Client sync | Yes |
-| `diary_entry` | Client sync | Yes |
-| `diary_entry_ingredient` | Client sync | Yes |
-| `food_item` | Client sync | Yes |
-| `food_item_serving` | Client sync | Yes |
-| `my_meal` | Client sync | Yes |
-| `my_meal_ingredient` | Client sync | Yes |
-| `recent_food` | Client sync | Yes |
+| `calorie_target_history` | Backend only (append on target change) | No |
+| `weight_entry` | Client sync | No |
+| `diary_entry` | Client sync | No |
+| `diary_entry_ingredient` | Client sync | No |
+| `food_item` | Client sync | No |
+| `food_item_serving` | Client sync | No |
+| `my_meal` | Client sync | No |
+| `my_meal_ingredient` | Client sync | No |
+| `recent_food` | Client sync | No |
+| `progress_photo` | Client upload (Supabase Storage) | No |
 | `rls_mode_config` | Manual seed | — |
 | `canonical_food_item` | Backend only (service-role, via `insert_canonical_foods` RPC) | No |
 | `canonical_food_serving` | Backend only (service-role, via `insert_canonical_foods` RPC) | No |

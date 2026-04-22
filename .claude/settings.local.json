@@ -60,7 +60,8 @@
       "Bash(./gradlew compileKotlin compileTestKotlin test)",
       "Bash(./gradlew compileKotlin test)",
       "Bash(./gradlew compileTestKotlin test)",
-      "Bash(./gradlew compileKotlin --console=plain)"
+      "Bash(./gradlew compileKotlin --console=plain)",
+      "mcp__supabase-development__list_tables"
     ]
   },
   "enableAllProjectMcpServers": true,
