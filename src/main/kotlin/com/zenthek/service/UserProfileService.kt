@@ -48,7 +48,7 @@ class UserProfileService(
         )
 
         val now = System.currentTimeMillis()
-        val profileForInsert = request.userProfile.toServerProfile(authenticatedProfile, now)
+        val profileForInsert = request.userProfile.toServerProfile(authenticatedProfile, authenticatedUser.userId, now)
         val userGoalForInsert = request.userGoal.toServerUserGoal(now)
         val calorieTargetForInsert = request.calorieTarget.toServerCalorieTarget(now)
 
@@ -242,9 +242,10 @@ class UserProfileService(
 
     private fun RegisterUserProfileInput.toServerProfile(
         authenticatedProfile: ResolvedAuthenticatedProfile,
+        userId: String,
         now: Long,
     ): UserProfileEntity = UserProfileEntity(
-        id = UUID.randomUUID().toString(),
+        id = userId,
         name = authenticatedProfile.name,
         email = authenticatedProfile.email,
         avatarUrl = authenticatedProfile.avatarUrl,

@@ -62,7 +62,9 @@
       "Bash(./gradlew compileTestKotlin test)",
       "Bash(./gradlew compileKotlin --console=plain)",
       "mcp__supabase-development__list_tables",
-      "mcp__supabase-production__list_tables"
+      "mcp__supabase-production__list_tables",
+      "mcp__supabase-production__execute_sql",
+      "mcp__supabase-production__apply_migration"
     ]
   },
   "enableAllProjectMcpServers": true,
