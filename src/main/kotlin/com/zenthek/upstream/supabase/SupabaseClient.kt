@@ -7,6 +7,7 @@ import com.zenthek.model.UserGoalEntity
 import com.zenthek.service.UnauthorizedException
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
+import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.get
@@ -200,13 +201,7 @@ class SupabaseClient(
         }
 
         if (!response.status.isSuccess()) {
-            log.error(
-                "[SUPABASE] user_profile insert failed userId={} profileId={} status={}",
-                userId,
-                profile.id,
-                response.status.value
-            )
-            throw IllegalStateException("Supabase profile insert failed with ${response.status.value}")
+            handleInsertFailure(response, table = "user_profile", userId = userId, rowId = profile.id)
         }
         log.info("[SUPABASE] user_profile insert success userId={} profileId={}", userId, profile.id)
     }
@@ -221,13 +216,7 @@ class SupabaseClient(
         }
 
         if (!response.status.isSuccess()) {
-            log.error(
-                "[SUPABASE] user_goal insert failed userId={} goalId={} status={}",
-                userId,
-                userGoal.id,
-                response.status.value
-            )
-            throw IllegalStateException("Supabase user_goal insert failed with ${response.status.value}")
+            handleInsertFailure(response, table = "user_goal", userId = userId, rowId = userGoal.id)
         }
         log.info("[SUPABASE] user_goal insert success userId={} goalId={}", userId, userGoal.id)
     }
@@ -246,13 +235,7 @@ class SupabaseClient(
         }
 
         if (!response.status.isSuccess()) {
-            log.error(
-                "[SUPABASE] calorie_target insert failed userId={} calorieTargetId={} status={}",
-                userId,
-                calorieTarget.id,
-                response.status.value
-            )
-            throw IllegalStateException("Supabase calorie_target insert failed with ${response.status.value}")
+            handleInsertFailure(response, table = "calorie_target", userId = userId, rowId = calorieTarget.id)
         }
         log.info("[SUPABASE] calorie_target insert success userId={} calorieTargetId={}", userId, calorieTarget.id)
     }
@@ -284,6 +267,46 @@ class SupabaseClient(
     private fun io.ktor.client.request.HttpRequestBuilder.applyUserScopedAuth(accessToken: String) {
         header("apikey", config.publicApiKey)
         bearerAuth(accessToken)
+    }
+
+    /**
+     * Inspects a failed insert response and throws an appropriate exception.
+     *
+     * A 409 carrying Postgres FK-violation error code 23503 against
+     * `auth.users` means the JWT's `sub` no longer matches a live auth user
+     * (typically: the user was deleted but a still-valid pre-delete access
+     * token was reused). Surface that as `UnauthorizedException` so the
+     * caller maps it to HTTP 401 and the client knows to re-authenticate.
+     * Anything else is a real upstream failure → IllegalStateException.
+     */
+    private suspend fun handleInsertFailure(
+        response: HttpResponse,
+        table: String,
+        userId: String,
+        rowId: String,
+    ): Nothing {
+        val status = response.status.value
+        val body = runCatching { response.bodyAsText() }.getOrDefault("")
+        if (response.status == HttpStatusCode.Conflict && isAuthUserFkViolation(body)) {
+            log.warn(
+                "[SUPABASE] {} insert rejected: auth.users FK violation userId={} (stale token from deleted user)",
+                table, userId
+            )
+            throw UnauthorizedException("Invalid or expired access token")
+        }
+        log.error(
+            "[SUPABASE] {} insert failed userId={} rowId={} status={} body={}",
+            table, userId, rowId, status, body.take(500)
+        )
+        throw IllegalStateException("Supabase $table insert failed with $status")
+    }
+
+    private fun isAuthUserFkViolation(body: String): Boolean {
+        if (body.isBlank()) return false
+        // PostgREST surfaces Postgres errors verbatim. 23503 = foreign_key_violation;
+        // the constraint name (`*_user_id_fkey`) confirms it's the auth.users FK and
+        // not some other FK on these tables.
+        return body.contains("\"23503\"") && body.contains("user_id_fkey")
     }
 }
 

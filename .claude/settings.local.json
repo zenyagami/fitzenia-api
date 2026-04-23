@@ -70,7 +70,10 @@
       "mcp__supabase-development__apply_migration",
       "mcp__supabase-development__search_docs",
       "mcp__supabase-development__execute_sql",
-      "mcp__supabase-production__list_migrations"
+      "mcp__supabase-production__list_migrations",
+      "Bash(rtk find *)",
+      "Bash(rtk ls *)",
+      "Bash(./gradlew compileKotlin -q)"
     ]
   },
   "enableAllProjectMcpServers": true,

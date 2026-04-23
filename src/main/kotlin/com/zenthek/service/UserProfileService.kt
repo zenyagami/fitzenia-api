@@ -57,6 +57,7 @@ class UserProfileService(
         if (!profileExists) {
             log.info("[USER] creating profile for userId={} profileId={}", authenticatedUser.userId, profileForInsert.id)
             supabaseGateway.insertUserProfile(accessToken, authenticatedUser.userId, profileForInsert).getOrElse { error ->
+                if (error is UnauthorizedException) throw error
                 throw UpstreamFailureException("Unable to create user profile: ${error.message}")
             }
             log.info("[USER] profile created userId={} profileId={}", authenticatedUser.userId, profileForInsert.id)
@@ -69,6 +70,7 @@ class UserProfileService(
         if (!userGoalExists) {
             log.info("[USER] creating user_goal for userId={} goalId={}", authenticatedUser.userId, userGoalForInsert.id)
             supabaseGateway.insertUserGoal(accessToken, authenticatedUser.userId, userGoalForInsert).getOrElse { error ->
+                if (error is UnauthorizedException) throw error
                 throw UpstreamFailureException("Unable to create user goal: ${error.message}")
             }
             log.info("[USER] user_goal created userId={} goalId={}", authenticatedUser.userId, userGoalForInsert.id)
@@ -84,6 +86,7 @@ class UserProfileService(
                 calorieTargetForInsert.id
             )
             supabaseGateway.insertCalorieTarget(accessToken, authenticatedUser.userId, calorieTargetForInsert).getOrElse { error ->
+                if (error is UnauthorizedException) throw error
                 throw UpstreamFailureException("Unable to create calorie target: ${error.message}")
             }
             log.info(
