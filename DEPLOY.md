@@ -68,7 +68,7 @@ Put the real value in the local file for that environment:
 cp .env.example .env.dev
 
 # Production
-cp .env.example .env.prod
+cp .env.example ..env.prod
 ```
 
 Then add:
@@ -93,7 +93,7 @@ For environment-specific files:
 
 ```bash
 ./check-cloud-run-env.sh dev .env.dev
-./check-cloud-run-env.sh prod .env.prod
+./check-cloud-run-env.sh prod ..env.prod
 ```
 
 By default the script ignores `PORT`, since Cloud Run injects that automatically.
@@ -110,7 +110,7 @@ IGNORE_KEYS=PORT,MY_LOCAL_ONLY_KEY ./check-cloud-run-env.sh
 ENV_FILE=.env.dev ./sync-secrets.sh dev
 
 # Production
-ENV_FILE=.env.prod ./sync-secrets.sh prod
+ENV_FILE=..env.prod ./sync-secrets.sh prod
 ```
 
 This script now does both jobs:
@@ -163,10 +163,10 @@ gcloud services enable run.googleapis.com secretmanager.googleapis.com \
   containerregistry.googleapis.com --project=fitzenio
 
 # 3. Prepare your local env file with prod values
-cp .env.example .env.prod
+cp .env.example ..env.prod
 
 # 4. Sync secrets + IAM grants
-ENV_FILE=.env.prod ./sync-secrets.sh prod
+ENV_FILE=..env.prod ./sync-secrets.sh prod
 
 # 5. Deploy
 ./deploy.sh

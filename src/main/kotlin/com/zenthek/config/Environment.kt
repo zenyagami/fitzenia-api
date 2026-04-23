@@ -19,7 +19,7 @@ data class ApiKeys(
     val fatSecretClientSecret: String,
     val usdaApiKey: String,
     val openAiApiKey: String,
-    val supabaseServiceRoleKey: String?     // Required when SmartSearchConfig.enabled = true; validated at startup
+    val supabaseServiceRoleKey: String      // Required at startup for Smart Search and /api/account admin ops
 )
 
 data class SmartSearchConfig(
@@ -110,12 +110,9 @@ private fun loadSmartSearchConfig(): SmartSearchConfig {
     )
 }
 
-private fun loadSupabaseServiceRoleKey(smartSearchEnabled: Boolean): String? {
-    val key = env("SUPABASE_SERVICE_ROLE_KEY")?.trim()?.ifBlank { null }
-    if (smartSearchEnabled && key == null) {
-        error("Missing SUPABASE_SERVICE_ROLE_KEY (required when SMART_FOOD_SEARCH_ENABLED=true)")
-    }
-    return key
+private fun loadSupabaseServiceRoleKey(): String {
+    return env("SUPABASE_SERVICE_ROLE_KEY")?.trim()?.ifBlank { null }
+        ?: error("Missing SUPABASE_SERVICE_ROLE_KEY")
 }
 
 object ConfigLoader {
@@ -137,7 +134,7 @@ object ConfigLoader {
                 fatSecretClientSecret = env("FATSECRET_CLIENT_SECRET") ?: error("Missing FATSECRET_CLIENT_SECRET"),
                 usdaApiKey = env("USDA_API_KEY") ?: error("Missing USDA_API_KEY"),
                 openAiApiKey = env("OPENAI_API_KEY") ?: error("Missing OPENAI_API_KEY"),
-                supabaseServiceRoleKey = loadSupabaseServiceRoleKey(smartSearch.enabled),
+                supabaseServiceRoleKey = loadSupabaseServiceRoleKey(),
             ),
             useGeminiForAiImage = parseUseGemini(env("USE_GEMINI")),
             geminiApiKey = env("GEMINI_API_KEY") ?: error("Missing GEMINI_API_KEY"),
@@ -160,7 +157,7 @@ object ConfigLoader {
                 fatSecretClientSecret = env("FATSECRET_CLIENT_SECRET") ?: error("Missing FATSECRET_CLIENT_SECRET"),
                 usdaApiKey = env("USDA_API_KEY") ?: error("Missing USDA_API_KEY"),
                 openAiApiKey = env("OPENAI_API_KEY") ?: error("Missing OPENAI_API_KEY"),
-                supabaseServiceRoleKey = loadSupabaseServiceRoleKey(smartSearch.enabled),
+                supabaseServiceRoleKey = loadSupabaseServiceRoleKey(),
             ),
             useGeminiForAiImage = parseUseGemini(env("USE_GEMINI")),
             geminiApiKey = env("GEMINI_API_KEY") ?: error("Missing GEMINI_API_KEY"),

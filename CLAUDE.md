@@ -305,7 +305,7 @@ Route groups are wrapped with `rateLimit(RateLimitName(...)) { ... }` inside `Ro
 - `SMART_SEARCH_AI_SYNC_ON_MISS=false` (default) — first user gets upstream-only while AI warms the catalog in the background; subsequent users hit the warm catalog. Set `true` for a higher-latency but immediately-canonical response.
 
 **Important constraints:**
-- Service role key handling: `SUPABASE_SERVICE_ROLE_KEY` is **backend-only**; never surface it to clients, never log it. Required when `SMART_FOOD_SEARCH_ENABLED=true` — `ConfigLoader` fails at startup if absent.
+- Service role key handling: `SUPABASE_SERVICE_ROLE_KEY` is **backend-only**; never surface it to clients, never log it. Always required — `ConfigLoader` fails at startup if absent.
 - The background scope uses `SupervisorJob` + `Dispatchers.IO` and is cancelled on `ApplicationStopping` so in-flight writes finish cleanly.
 - Cold-start friendly: the catalog + Gemini clients rebuild their state on boot; no disk persistence in the service itself.
 
@@ -410,7 +410,7 @@ failure with a clear error — no silent null propagation.
 | `SUPABASE_PUBLISHABLE_KEY` | Yes¹ | Modern Supabase publishable key (preferred) |
 | `SUPABASE_ANON_KEY` / `SUPABASE_DEV_ANON_KEY` | Yes¹ | Legacy anon JWT fallback (`SUPABASE_DEV_ANON_KEY` is read in development, `SUPABASE_ANON_KEY` in production) |
 | `SUPABASE_JWT_VERIFICATION_MODE` | No (default `JWKS`) | `JWKS` or `REMOTE` — see Authentication section |
-| `SUPABASE_SERVICE_ROLE_KEY` | Conditional | **Required when `SMART_FOOD_SEARCH_ENABLED=true`**. Backend-only. Never expose to clients. |
+| `SUPABASE_SERVICE_ROLE_KEY` | Yes | Backend-only. Used by Smart Search and the `/api/account` admin delete path. Never expose to clients. |
 | **Smart Food Search** | | |
 | `SMART_FOOD_SEARCH_ENABLED` | No (default `false`) | Master switch for `SmartSearchOrchestrator` |
 | `SMART_SEARCH_USDA_ENABLED` | No (default `true`) | Kill-switch for USDA fan-out inside Smart Search |

@@ -51,7 +51,7 @@ default_env_file() {
   local target="$1"
   local candidate
   if [[ "$target" == "prod" ]]; then
-    for candidate in .env.prod .env.production .env; do
+    for candidate in ..env.prod .env.production .env; do
       if [[ -f "$candidate" ]]; then
         printf '%s' "$candidate"
         return 0

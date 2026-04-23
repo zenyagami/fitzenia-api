@@ -532,6 +532,7 @@ Cloud Run forwards stdout to Cloud Logging automatically. The JSON format is par
 | `SUPABASE_PUBLISHABLE_KEY` | Yes¹ | Layer 4 | Modern Supabase publishable key (preferred) |
 | `SUPABASE_ANON_KEY` / `SUPABASE_DEV_ANON_KEY` | Yes¹ | Layer 4 | Legacy anon JWT fallback |
 | `SUPABASE_JWT_VERIFICATION_MODE` | No (default `JWKS`) | Layer 4 | `JWKS` or `REMOTE` |
+| `SUPABASE_SERVICE_ROLE_KEY` | Yes | Layer 4 | Backend-only. Bypasses RLS. Used for Smart Search catalog + `/api/account` admin delete. Never expose to clients. |
 
 ¹ At least one of `SUPABASE_PUBLISHABLE_KEY` or the legacy anon key must be present.
 

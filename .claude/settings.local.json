@@ -66,7 +66,11 @@
       "mcp__supabase-production__execute_sql",
       "mcp__supabase-production__apply_migration",
       "Bash(rtk wc *)",
-      "Bash(rtk grep *)"
+      "Bash(rtk grep *)",
+      "mcp__supabase-development__apply_migration",
+      "mcp__supabase-development__search_docs",
+      "mcp__supabase-development__execute_sql",
+      "mcp__supabase-production__list_migrations"
     ]
   },
   "enableAllProjectMcpServers": true,

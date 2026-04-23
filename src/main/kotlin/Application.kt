@@ -7,6 +7,7 @@ import com.zenthek.model.ImageAnalyzer
 import com.zenthek.model.ErrorResponse
 import com.zenthek.routes.RateLimitNames
 import com.zenthek.routes.configureRouting
+import com.zenthek.service.AccountService
 import com.zenthek.service.FoodService
 import com.zenthek.service.SmartSearchOrchestrator
 import com.zenthek.service.UnauthorizedException
@@ -14,6 +15,7 @@ import com.zenthek.service.UpstreamFailureException
 import com.zenthek.service.UserProfileService
 import com.zenthek.upstream.supabase.CanonicalCatalogClient
 import com.zenthek.upstream.supabase.CanonicalCatalogGateway
+import com.zenthek.upstream.supabase.SupabaseAdminGateway
 import com.zenthek.upstream.supabase.SupabaseClient
 import com.zenthek.upstream.openai.OpenAiApiService
 import com.zenthek.upstream.gemini.GeminiApiService
@@ -80,8 +82,14 @@ fun Application.module() {
     val canonicalCatalog: CanonicalCatalogGateway = CanonicalCatalogClient(
         httpClient = httpClient,
         config = config.supabase,
-        serviceRoleKey = config.apiKeys.supabaseServiceRoleKey ?: "DISABLED"
+        serviceRoleKey = config.apiKeys.supabaseServiceRoleKey
     )
+    val supabaseAdminGateway = SupabaseAdminGateway(
+        httpClient = httpClient,
+        supabaseConfig = config.supabase,
+        serviceRoleKey = config.apiKeys.supabaseServiceRoleKey,
+    )
+    val accountService = AccountService(supabaseAdminGateway)
     val aiSearchClient = GeminiAiSearchClient(
         httpClient = httpClient,
         apiKey = config.geminiApiKey,
@@ -116,7 +124,7 @@ fun Application.module() {
     configureStatusPages()
     configureRateLimit()
     configureAuthentication(config.supabase, supabaseClient)
-    configureRouting(foodService, smartSearch, imageAnalyzer, userProfileService)
+    configureRouting(foodService, smartSearch, imageAnalyzer, userProfileService, accountService)
 }
 
 fun Application.configureRateLimit() {
@@ -127,6 +135,10 @@ fun Application.configureRateLimit() {
         }
         register(RateLimitName(RateLimitNames.IMAGE_ANALYSIS)) {
             rateLimiter(limit = 20, refillPeriod = 1.minutes)
+            requestKey { call -> call.authenticatedUserIdOrFail() }
+        }
+        register(RateLimitName(RateLimitNames.ACCOUNT)) {
+            rateLimiter(limit = 3, refillPeriod = 1.minutes)
             requestKey { call -> call.authenticatedUserIdOrFail() }
         }
     }

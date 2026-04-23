@@ -7,6 +7,7 @@ import com.zenthek.model.AnalyzeImageRequest
 import com.zenthek.model.ImageAnalysisResponse
 import com.zenthek.model.ImageAnalyzer
 import com.zenthek.model.RegisterUserRequest
+import com.zenthek.service.AccountService
 import com.zenthek.service.FoodService
 import com.zenthek.model.SearchStreamBestMatch
 import com.zenthek.model.SmartSearchResponse
@@ -27,6 +28,7 @@ import org.slf4j.LoggerFactory
 object RateLimitNames {
     const val FOOD_SEARCH = "food-search"
     const val IMAGE_ANALYSIS = "image-analysis"
+    const val ACCOUNT = "account"
 }
 
 private val sseJson = Json { ignoreUnknownKeys = true }
@@ -42,6 +44,7 @@ fun Application.configureRouting(
     smartSearch: SmartSearchOrchestrator,
     imageAnalyzer: ImageAnalyzer,
     userProfileService: UserProfileService,
+    accountService: AccountService,
 ) {
     routing {
         get("/health") {
@@ -55,6 +58,16 @@ fun Application.configureRouting(
 
             route("/api/user") {
                 configureUserRoutes(userProfileService)
+            }
+
+            rateLimit(RateLimitName(RateLimitNames.ACCOUNT)) {
+                route("/api/account") {
+                    delete {
+                        val user = call.requireAuthenticatedUser()
+                        accountService.deleteAccount(user.userId)
+                        call.respond(HttpStatusCode.NoContent)
+                    }
+                }
             }
         }
     }

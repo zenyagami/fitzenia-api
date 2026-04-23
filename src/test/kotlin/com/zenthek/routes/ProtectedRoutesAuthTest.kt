@@ -23,12 +23,14 @@ import com.zenthek.model.ImageAnalysisResponse
 import com.zenthek.model.ImageAnalyzer
 import com.zenthek.model.InsertCanonicalFoodsPayload
 import com.zenthek.model.InsertCanonicalFoodsResult
+import com.zenthek.service.AccountService
 import com.zenthek.service.FoodService
 import com.zenthek.service.SmartSearchOrchestrator
 import com.zenthek.service.UserProfileService
 import com.zenthek.upstream.openfoodfacts.OpenFoodFactsClient
 import com.zenthek.upstream.supabase.CanonicalCatalogGateway
 import com.zenthek.upstream.supabase.ExistingUserProfileIdentity
+import com.zenthek.upstream.supabase.SupabaseAdminGateway
 import com.zenthek.upstream.supabase.SupabaseAuthenticatedUser
 import com.zenthek.upstream.supabase.SupabaseGateway
 import com.zenthek.upstream.usda.UsdaClient
@@ -162,6 +164,7 @@ class ProtectedRoutesAuthTest {
                     )
                 },
                 userProfileService = userProfileService,
+                accountService = buildAccountService(baseUrl),
             )
         }
     }
@@ -175,11 +178,23 @@ class ProtectedRoutesAuthTest {
             fatSecretClientSecret = "client-secret",
             usdaApiKey = "usda-key",
             openAiApiKey = "openai-key",
-            supabaseServiceRoleKey = null,
+            supabaseServiceRoleKey = "service-role-key",
         )
         val offClient = OpenFoodFactsClient(httpClient)
         val usdaClient = UsdaClient(httpClient, apiKeys.usdaApiKey)
         return FoodService(offClient, usdaClient)
+    }
+
+    private fun buildAccountService(baseUrl: String): AccountService {
+        val httpClient = HttpClient(MockEngine {
+            error("Auth tests should not reach Supabase admin gateway")
+        })
+        val gateway = SupabaseAdminGateway(
+            httpClient = httpClient,
+            supabaseConfig = createTestSupabaseConfig(baseUrl),
+            serviceRoleKey = "service-role-key",
+        )
+        return AccountService(gateway)
     }
 
     /**
