@@ -18,7 +18,7 @@ spec:
         run.googleapis.com/memory: "1Gi"
         
         # Auto-scaling settings
-        autoscaling.knative.dev/minScale: "0"
+        autoscaling.knative.dev/minScale: "1"
         autoscaling.knative.dev/maxScale: "50"
         
         # Timeout settings

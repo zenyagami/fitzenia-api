@@ -1,4 +1,4 @@
-> Cross-reference `food-api-backend.md` for the full API specification — both files travel together.
+> Cross-reference `docs/food-api-backend.md` for the full API specification, `docs/API_SECURITY_BACKEND.md` for the auth/security design, and `docs/DATABASE_SCHEMA.md` for the Supabase schema — all files travel together.
 
 ---
 
@@ -25,10 +25,14 @@ See `food-api-backend.md` for the full endpoint spec, response schemas, and upst
 |---|---|---|
 | **Server** | Ktor 3.2.3 (Netty engine) | `ktor-server-netty` |
 | **HTTP client** | Ktor 3.2.3 (CIO engine) | `ktor-client-cio` |
+| **Auth** | Ktor `ktor-server-auth` + `ktor-server-auth-jwt` | Supabase JWT via JWKS (default) or remote `/auth/v1/user` fallback |
+| **Rate limiting** | Ktor `ktor-server-rate-limit` | Per-user limits on search + image analysis |
+| **Database / Auth provider** | Supabase | `SupabaseClient` for REST + Auth; `CanonicalCatalogClient` (service-role) for shared catalog |
+| **AI search** | Gemini 2.5 Flash Lite (classify/rank) + Flash (generate) | `GeminiAiSearchClient`, used by `SmartSearchOrchestrator` |
 | **Serialization** | kotlinx.serialization 1.7.3 | JSON only |
 | **Logging** | Logback 1.5.13 | Console output only (single `logback.xml`) |
 | **Dev env loading** | dotenv-kotlin 6.4.1 | Always loaded, `ignoreIfMissing = true` |
-| **Image analysis** | Gemini Flash Lite (primary) / GPT-4o mini (fallback) | Controlled by `config.useGemini` |
+| **Image analysis** | Gemini Flash (primary) / GPT-5-mini (fallback) | Controlled by `config.useGeminiForAiImage` |
 | **JDK** | 21 | Eclipse Temurin in container |
 | **Build** | Gradle 8.x Kotlin DSL + version catalog | `gradle/libs.versions.toml` |
 | **Container build** | Jib plugin | `./gradlew jib` pushes to GCR; no Dockerfile |
@@ -45,38 +49,55 @@ fitzenio-api/
 │       │   ├── Application.kt                  # EngineMain entry point (package com.zenthek.fitzenio.rest)
 │       │   └── com/zenthek/
 │       │       ├── config/
-│       │       │   └── Environment.kt          # AppConfig, ApiKeys, AppEnvironment, ConfigLoader
+│       │       │   └── Environment.kt          # AppConfig, ApiKeys, SupabaseConfig, SmartSearchConfig, ConfigLoader
+│       │       ├── auth/
+│       │       │   └── SupabaseAuthentication.kt  # Ktor Authentication plugin (jwt / bearer);
+│       │       │                                  # AuthenticatedUserContext principal;
+│       │       │                                  # requireAuthenticatedUser / requireBearerAccessToken
 │       │       ├── model/
-│       │       │   ├── FoodItem.kt             # FoodItem, NutritionInfo, ServingSize,
-│       │       │   │                           # SearchResponse, ApiError,
+│       │       │   ├── FoodItem.kt             # FoodItem, NutritionInfo, ServingSize, SearchResponse,
+│       │       │   │                           # SmartSearchResponse, SearchStreamBestMatch, ErrorResponse,
 │       │       │   │                           # ImageAnalysisItem, ImageAnalysisResponse, AnalyzeImageRequest
-│       │       │   └── ImageAnalyzer.kt        # ImageAnalyzer functional interface + ImageAnalyzerFactory (system prompt)
+│       │       │   ├── ImageAnalyzer.kt        # ImageAnalyzer functional interface + system prompt
+│       │       │   ├── CanonicalCatalogEntities.kt # canonical food / serving entities for Supabase catalog
+│       │       │   └── UserProfile.kt          # RegisterUserRequest, registration status DTOs
 │       │       ├── routes/
-│       │       │   └── Routing.kt              # all routes: health, search, barcode,
-│       │       │                               # autocomplete, analyze-image, analyze-image-stream
+│       │       │   └── Routing.kt              # health (public); /api/food/* and /api/user/* under
+│       │       │                               # authenticate(SUPABASE_AUTH_PROVIDER); rateLimit groups
 │       │       ├── service/
-│       │       │   ├── FoodService.kt          # fan-out, merge, deduplicate, autocomplete
+│       │       │   ├── FoodService.kt          # OFF + USDA fan-out, merge, deduplicate, autocomplete
+│       │       │   ├── SmartSearchOrchestrator.kt # canonical-catalog-first search + AI rank + write-behind
+│       │       │   ├── QueryNormalizer.kt      # locale-aware query canonicalization
+│       │       │   ├── NutritionValidator.kt   # sanity-checks AI-generated nutrition payloads
+│       │       │   ├── UserProfileService.kt   # register / registration-status business logic
+│       │       │   ├── UnauthorizedException.kt
 │       │       │   └── UpstreamFailureException.kt
 │       │       ├── network/
 │       │       │   └── HttpClientProvider.kt
+│       │       ├── ai/
+│       │       │   ├── AiSearchClient.kt       # interface: classifyQuery + generateBestMatch
+│       │       │   └── GeminiAiSearchClient.kt # Gemini Flash Lite (rank) + Flash (grounded generation)
 │       │       ├── upstream/
 │       │       │   ├── openfoodfacts/
 │       │       │   │   ├── OpenFoodFactsClient.kt   # v3 product + search-a-licious search + autocomplete
 │       │       │   │   └── dto/OpenFoodFactsDto.kt
-│       │       │   ├── fatsecret/
-│       │       │   │   ├── FatSecretClient.kt       # foods.search.v5 + autocomplete.v2 + barcode
-│       │       │   │   ├── FatSecretTokenManager.kt # OAuth2 with Mutex
+│       │       │   ├── fatsecret/                   # legacy; retained but NOT wired into FoodService
+│       │       │   │   ├── FatSecretClient.kt
+│       │       │   │   ├── FatSecretTokenManager.kt
 │       │       │   │   └── dto/FatSecretDto.kt
 │       │       │   ├── usda/
 │       │       │   │   ├── UsdaClient.kt
 │       │       │   │   └── dto/UsdaDto.kt
+│       │       │   ├── supabase/
+│       │       │   │   ├── SupabaseClient.kt        # SupabaseGateway: auth user lookup + user_profiles REST
+│       │       │   │   └── CanonicalCatalogGateway.kt  # service-role catalog reads/writes
 │       │       │   ├── gemini/
-│       │       │   │   └── GeminiApiService.kt      # Gemini Flash Lite image analysis (primary)
+│       │       │   │   └── GeminiApiService.kt      # Gemini Flash image analysis (primary)
 │       │       │   └── openai/
-│       │       │       └── OpenAiApiService.kt      # GPT-4o mini image analysis (fallback)
+│       │       │       └── OpenAiApiService.kt      # GPT-5-mini image analysis (fallback)
 │       │       └── mapper/
 │       │           ├── OpenFoodFactsMapper.kt  # map() for barcode, mapV3Search() for search
-│       │           ├── FatSecretMapper.kt      # mapDetail() for both barcode and search
+│       │           ├── FatSecretMapper.kt      # (legacy, unused — kept for reference)
 │       │           └── UsdaMapper.kt
 │       └── resources/
 │           ├── application.conf                # HOCON config: port, module ref, PROJECT_ID
@@ -84,9 +105,15 @@ fitzenio-api/
 ├── src/test/kotlin/com/zenthek/
 │   ├── mapper/                                 # mapper unit tests with fixture DTOs
 │   ├── routes/                                 # testApplication { } integration tests
-│   └── upstream/                              # MockEngine client tests
+│   └── upstream/                               # MockEngine client tests
 ├── gradle/
-│   └── libs.versions.toml                     # centralized version catalog
+│   └── libs.versions.toml                      # centralized version catalog
+├── docs/
+│   ├── food-api-backend.md                     # full endpoint spec
+│   ├── API_SECURITY_BACKEND.md                 # auth/security design (JWT, RLS, rate limits)
+│   ├── DATABASE_SCHEMA.md                      # Supabase schema reference
+│   ├── AI_PROMPT.md                            # AI search / image prompt design
+│   └── migrations/                             # Supabase SQL migrations
 ├── .env.example
 ├── .gitignore
 ├── cloud-run-config.yaml                       # production Cloud Run service config
@@ -94,6 +121,8 @@ fitzenio-api/
 ├── deploy.sh                                   # production deploy (fitzenio GCP project)
 ├── deploy-dev.sh                               # staging deploy (fitzenio-debug GCP project)
 ├── grant-secrets.sh                            # Secret Manager IAM bindings
+├── sync-secrets.sh                             # sync local .env → Secret Manager
+├── check-cloud-run-env.sh                      # diff deployed env vars vs local config
 ├── DEPLOY.md                                   # deployment guide
 ├── build.gradle.kts
 └── settings.gradle.kts
@@ -134,23 +163,47 @@ No DI framework. Use plain constructor injection via `ConfigLoader`:
 ```kotlin
 // Application.kt
 fun Application.module() {
-    val config = ConfigLoader.loadConfig()  // loads AppConfig with ApiKeys + image analysis config
+    val config = ConfigLoader.loadConfig()          // AppConfig: ApiKeys + Supabase + SmartSearch + image config
     val httpClient = buildHttpClient()
 
     val offClient = OpenFoodFactsClient(httpClient)
-    val fsTokenManager = FatSecretTokenManager(httpClient, config.apiKeys)
-    val fsClient = FatSecretClient(httpClient, fsTokenManager)
     val usdaClient = UsdaClient(httpClient, config.apiKeys.usdaApiKey)
-    val imageAnalyzer: ImageAnalyzer = if (config.useGemini) {
+    val imageAnalyzer: ImageAnalyzer = if (config.useGeminiForAiImage) {
         GeminiApiService(httpClient, config.geminiApiKey)
     } else {
         OpenAiApiService(httpClient, config.apiKeys.openAiApiKey)
     }
-    val foodService = FoodService(offClient, fsClient, usdaClient)
+    val foodService = FoodService(offClient, usdaClient)
 
-    install(ContentNegotiation) { json(appJson) }
-    install(StatusPages) { ... }
-    configureRouting(foodService, imageAnalyzer)
+    val supabaseClient = SupabaseClient(httpClient, config.supabase)
+    val userProfileService = UserProfileService(supabaseClient)
+
+    val canonicalCatalog = CanonicalCatalogClient(httpClient, config.supabase,
+        serviceRoleKey = config.apiKeys.supabaseServiceRoleKey ?: "DISABLED")
+    val aiSearchClient = GeminiAiSearchClient(httpClient, config.geminiApiKey,
+        rankModel = config.smartSearch.aiRankModel,
+        generateModel = config.smartSearch.aiGenerateModel)
+
+    // SupervisorJob + Dispatchers.IO for async write-behind AI generation; cancelled on ApplicationStopping.
+    val smartSearchBackgroundScope = CoroutineScope(
+        SupervisorJob() + Dispatchers.IO + CoroutineName("smart-search-bg")
+    )
+    monitor.subscribe(ApplicationStopping) { smartSearchBackgroundScope.cancel() }
+
+    val smartSearch = SmartSearchOrchestrator(
+        offSearch = offClient::searchPaged,
+        usdaSearch = usdaClient::searchPaged,
+        catalog = canonicalCatalog,
+        ai = aiSearchClient,
+        config = config.smartSearch,
+        backgroundScope = smartSearchBackgroundScope,
+    )
+
+    configureSerialization()
+    configureStatusPages()
+    configureRateLimit()
+    configureAuthentication(config.supabase, supabaseClient)          // installs Ktor Authentication
+    configureRouting(foodService, smartSearch, imageAnalyzer, userProfileService)
 }
 ```
 
@@ -163,10 +216,98 @@ fun Application.module() {
 
 ### Route handlers
 
-- Route handlers only validate input and delegate to `FoodService` or `ImageAnalyzer`
+- Route handlers only validate input and delegate to `FoodService`, `SmartSearchOrchestrator`, `ImageAnalyzer`, or `UserProfileService`
 - **Never call upstream APIs from route handlers directly**
 - Keep route files thin — extract complex query param parsing to separate functions if needed
 - **Never use `mapOf(...)` with mixed value types for responses** — kotlinx.serialization cannot serialize `Map<String, Any>`. Always use a typed `@Serializable` data class instead. (Exception: homogeneous `Map<String, String>` is fine.)
+- All `/api/**` routes are wrapped in `authenticate(SUPABASE_AUTH_PROVIDER) { ... }`. Only `GET /health` is public. Handlers retrieve the caller via `call.requireAuthenticatedUser()` and, if they need to forward the token to Supabase REST, `call.requireBearerAccessToken()`.
+
+---
+
+## Authentication (Supabase JWT)
+
+All endpoints except `GET /health` require a Supabase-issued JWT in `Authorization: Bearer <token>`. `configureAuthentication()` in `auth/SupabaseAuthentication.kt` installs Ktor's `Authentication` plugin under the provider name `SUPABASE_AUTH_PROVIDER` (`"supabase-jwt"`).
+
+### Verification modes
+
+Controlled by `SUPABASE_JWT_VERIFICATION_MODE` (default `JWKS`):
+
+| Mode | Behavior | When to use |
+|---|---|---|
+| `JWKS` | Verifies signature locally against Supabase's JWKS (cached 10 min, rate-limited 10/min). Validates `iss = ${SUPABASE_URL}/auth/v1`, `aud = authenticated`, 30s clock leeway. | **Default.** Zero per-request network cost, scales cleanly. |
+| `REMOTE` | On every request, calls `GET ${SUPABASE_URL}/auth/v1/user` with the bearer token. | Temporary fallback only — logs a warning at startup. Every request adds an upstream hop. |
+
+On startup the app probes the JWKS endpoint (`JWKS` mode only) and logs reachability — a failed probe is a warning, not a fatal error.
+
+### Principal
+
+A successful validation produces an `AuthenticatedUserContext`:
+
+```kotlin
+data class AuthenticatedUserContext(
+    val userId: String,     // JWT `sub`
+    val email: String?,
+    val name: String?,      // JWT user_metadata.name / full_name
+    val avatarUrl: String?, // JWT user_metadata.avatar_url / picture
+    val role: String,       // must equal "authenticated"
+)
+```
+
+Rejection rules (validator returns `null` → 401):
+- `sub` is blank
+- `role` claim is not `"authenticated"`
+- `aud` does not contain `"authenticated"`
+
+The raw bearer token is stashed on the call under `SupabaseAccessTokenKey` so downstream services (e.g., `UserProfileService`) can forward it to Supabase REST for RLS-scoped queries.
+
+### Helpers
+
+- `call.requireAuthenticatedUser(): AuthenticatedUserContext` — throws `UnauthorizedException` if the principal is missing.
+- `call.requireBearerAccessToken(): String` — returns the token cached during validation, else re-extracts from the `Authorization` header; throws `UnauthorizedException` if missing.
+
+### Important constraints
+
+- **Never log JWTs or access tokens** — they are bearer credentials.
+- **Never hit Supabase auth from route handlers** — route handlers call `requireAuthenticatedUser()` / `requireBearerAccessToken()` only; services talk to Supabase.
+- **Do not add a separate `bearer { }` provider** — the `jwt { }` / `bearer { }` branch is selected inside `configureAuthentication` based on `SupabaseJwtVerificationMode`.
+- **`UnauthorizedException`** is caught by `StatusPages` and mapped to HTTP 401 with an `ErrorResponse` body. Throw it from services when an upstream auth call (e.g., Supabase REST) returns 401.
+- The token stashed in `SupabaseAccessTokenKey` is per-request — do not cache it anywhere else.
+
+---
+
+## Rate limiting
+
+`configureRateLimit()` installs Ktor's `RateLimit` plugin with per-user buckets keyed off `AuthenticatedUserContext.userId` (pulled from `call.principal<AuthenticatedUserContext>()`). Requests that somehow reach the rate limiter without a principal throw `UnauthorizedException` (defense-in-depth — the `authenticate { }` wrapper should have already rejected them).
+
+| Bucket | Name constant | Limit |
+|---|---|---|
+| Food search / autocomplete / barcode / smart search stream | `RateLimitNames.FOOD_SEARCH` (`"food-search"`) | 200 req/min/user |
+| Image analysis (sync + SSE) | `RateLimitNames.IMAGE_ANALYSIS` (`"image-analysis"`) | 20 req/min/user |
+
+Route groups are wrapped with `rateLimit(RateLimitName(...)) { ... }` inside `Routing.kt`. Adding a new endpoint to an existing bucket just means placing it inside the right block; creating a new bucket requires registering it in both `Application.configureRateLimit()` and `RateLimitNames`.
+
+---
+
+## Smart Food Search
+
+`SmartSearchOrchestrator` sits in front of OFF + USDA for the `/api/food/search` and `/api/food/search/stream` endpoints. It layers a shared canonical catalog (Supabase) and Gemini-driven classification/generation on top of upstream results to deliver a consistent `bestMatch` per query.
+
+**Flow (simplified):**
+1. Normalize the query (`QueryNormalizer`) with locale/country context.
+2. Look up canonical catalog hit via `CanonicalCatalogGateway` (service-role key).
+3. Run upstream OFF (+ USDA if `SMART_SEARCH_USDA_ENABLED`) in parallel.
+4. Use Gemini Flash Lite to classify/rank; Gemini Flash to generate a grounded `bestMatch` when the catalog misses.
+5. Validate AI output with `NutritionValidator`; if `confidence >= CATALOG_WRITE_CONFIDENCE_THRESHOLD`, persist to the canonical catalog (sync on miss, or async write-behind, per config).
+
+**Kill-switch / flags** (see env table below):
+- `SMART_FOOD_SEARCH_ENABLED=false` — orchestrator short-circuits to upstream-only; catalog + AI clients are still constructed but never called.
+- `SMART_SEARCH_USDA_ENABLED` — disables USDA fan-out without recompiling.
+- `SMART_SEARCH_AI_SYNC_ON_MISS=false` (default) — first user gets upstream-only while AI warms the catalog in the background; subsequent users hit the warm catalog. Set `true` for a higher-latency but immediately-canonical response.
+
+**Important constraints:**
+- Service role key handling: `SUPABASE_SERVICE_ROLE_KEY` is **backend-only**; never surface it to clients, never log it. Required when `SMART_FOOD_SEARCH_ENABLED=true` — `ConfigLoader` fails at startup if absent.
+- The background scope uses `SupervisorJob` + `Dispatchers.IO` and is cancelled on `ApplicationStopping` so in-flight writes finish cleanly.
+- Cold-start friendly: the catalog + Gemini clients rebuild their state on boot; no disk persistence in the service itself.
 
 ---
 
@@ -197,10 +338,10 @@ fun interface ImageAnalyzer {
 
 | Backend | Class | Notes |
 |---|---|---|
-| **Gemini** (primary) | `GeminiApiService` | Flash Lite model; context cache with 1h TTL, Mutex-protected; 90s timeout |
-| **OpenAI** (fallback) | `OpenAiApiService` | GPT-4o mini via Responses API; reasoning effort "low"; 120s timeout |
+| **Gemini** (primary) | `GeminiApiService` | Flash model; context cache with 1h TTL, Mutex-protected; 90s timeout |
+| **OpenAI** (fallback) | `OpenAiApiService` | GPT-5-mini via Responses API; reasoning effort "low"; 120s timeout |
 
-Selection is controlled by `config.useGemini` (currently hardcoded `true` in `ConfigLoader`).
+Selection is controlled by `config.useGeminiForAiImage` (env `USE_GEMINI`, defaults to `true`).
 The system prompt lives in `ImageAnalyzerFactory.IMAGE_ANALYZE_SYSTEM_PROMPT` inside `ImageAnalyzer.kt`.
 
 ---
@@ -256,28 +397,64 @@ failure with a clear error — no silent null propagation.
 
 | Variable | Required | Description |
 |---|---|---|
-| `FATSECRET_CLIENT_ID` | Yes | FatSecret OAuth2 client ID |
-| `FATSECRET_CLIENT_SECRET` | Yes | FatSecret OAuth2 client secret |
+| `FATSECRET_CLIENT_ID` | Yes | FatSecret OAuth2 client ID (legacy — still validated at startup) |
+| `FATSECRET_CLIENT_SECRET` | Yes | FatSecret OAuth2 client secret (legacy — still validated at startup) |
 | `USDA_API_KEY` | Yes | USDA FoodData Central API key |
 | `OPENAI_API_KEY` | Yes | OpenAI API key (fallback image analysis) |
-| `GEMINI_API_KEY` | Yes | Google Gemini API key (primary image analysis) |
+| `GEMINI_API_KEY` | Yes | Google Gemini API key (primary image analysis + Smart Search AI) |
+| `USE_GEMINI` | No (default `true`) | Choose image analysis backend: `true` = Gemini, `false` = OpenAI |
 | `PORT` | No (default `8080`) | Injected by Cloud Run automatically |
 | `APP_ENVIRONMENT` | No (default `development`) | Set to `production` on Cloud Run |
+| **Supabase** | | |
+| `SUPABASE_URL` | Yes | Base URL (e.g., `https://xxx.supabase.co`) — used for issuer, JWKS, REST |
+| `SUPABASE_PUBLISHABLE_KEY` | Yes¹ | Modern Supabase publishable key (preferred) |
+| `SUPABASE_ANON_KEY` / `SUPABASE_DEV_ANON_KEY` | Yes¹ | Legacy anon JWT fallback (`SUPABASE_DEV_ANON_KEY` is read in development, `SUPABASE_ANON_KEY` in production) |
+| `SUPABASE_JWT_VERIFICATION_MODE` | No (default `JWKS`) | `JWKS` or `REMOTE` — see Authentication section |
+| `SUPABASE_SERVICE_ROLE_KEY` | Conditional | **Required when `SMART_FOOD_SEARCH_ENABLED=true`**. Backend-only. Never expose to clients. |
+| **Smart Food Search** | | |
+| `SMART_FOOD_SEARCH_ENABLED` | No (default `false`) | Master switch for `SmartSearchOrchestrator` |
+| `SMART_SEARCH_USDA_ENABLED` | No (default `true`) | Kill-switch for USDA fan-out inside Smart Search |
+| `AI_SEARCH_RANK_MODEL` | No (default `gemini-2.5-flash-lite`) | Gemini model for classify/rank |
+| `AI_SEARCH_GENERATE_MODEL` | No (default `gemini-2.5-flash`) | Gemini model for grounded best-match generation |
+| `AI_SEARCH_CLASSIFY_TIMEOUT_MS` | No (default `3000`) | Timeout for Gemini classify call |
+| `AI_SEARCH_GENERATE_TIMEOUT_MS` | No (default `8000`) | Timeout for Gemini generate call |
+| `SMART_SEARCH_AI_SYNC_ON_MISS` | No (default `false`) | `false` = async write-behind; `true` = sync-on-miss (higher latency) |
+| `CATALOG_WRITE_CONFIDENCE_THRESHOLD` | No (default `0.7`) | Minimum AI confidence required to persist to canonical catalog |
+
+¹ At least one of `SUPABASE_PUBLISHABLE_KEY` or the legacy anon key must be present. Startup fails with a clear error otherwise.
 
 ---
 
 ## `.env.example` — commit this file verbatim
 
 ```
-# Copy this file to .env and fill in real values. Never commit .env
-FATSECRET_CLIENT_ID=your_fatsecret_client_id
-FATSECRET_CLIENT_SECRET=your_fatsecret_client_secret
-USDA_API_KEY=your_usda_api_key
-OPENAI_API_KEY=your_openai_api_key
+# Copy this file to .env (or .env.dev / .env.prod) and fill in real values. Never commit the filled copy.
+USE_GEMINI=true
+FATSECRET_CLIENT_ID=""
+FATSECRET_CLIENT_SECRET=""
+USDA_API_KEY=""
+OPENAI_API_KEY=""
 APP_ENVIRONMENT=development
 PORT=8080
-USE_GEMINI=false
-GEMINI_API_KEY=your_gemini_api_key_here
+GEMINI_API_KEY=""
+
+# Supabase (auth + canonical catalog)
+SUPABASE_URL=""
+SUPABASE_PUBLISHABLE_KEY=
+SUPABASE_JWT_VERIFICATION_MODE=JWKS
+# Required only when SMART_FOOD_SEARCH_ENABLED=true. Backend-only; never expose to clients.
+SUPABASE_SERVICE_ROLE_KEY=""
+
+# Smart Food Search (canonical catalog + AI-grounded generic best match)
+SMART_FOOD_SEARCH_ENABLED=true
+SMART_SEARCH_USDA_ENABLED=true
+AI_SEARCH_RANK_MODEL=gemini-2.5-flash-lite
+AI_SEARCH_GENERATE_MODEL=gemini-2.5-flash
+AI_SEARCH_CLASSIFY_TIMEOUT_MS=3000
+AI_SEARCH_GENERATE_TIMEOUT_MS=8000
+# false = async write-behind (low latency); true = sync-on-miss (canonical immediately).
+SMART_SEARCH_AI_SYNC_ON_MISS=false
+CATALOG_WRITE_CONFIDENCE_THRESHOLD=0.7
 ```
 
 ---
@@ -362,6 +539,9 @@ Secrets are managed via Google Cloud Secret Manager (`grant-secrets.sh` sets IAM
   (OFF's fair-use policy requires this): `User-Agent: FitzenioApp/1.0 (contact@zenthek.com)`
 - FatSecret OAuth2 token is cached in memory — never written to disk, never logged
 - Gemini context cache ID is cached in memory — never written to disk, never logged
+- **Never log Supabase JWTs or bearer tokens** — they are user credentials; also applies to the service role key
+- **`SUPABASE_SERVICE_ROLE_KEY` is backend-only** — injected via Secret Manager on Cloud Run, never surfaced in client responses, never echoed in logs
+- **Only `GET /health` is public** — every other route must live inside `authenticate(SUPABASE_AUTH_PROVIDER) { ... }`. If you add a new route, default to placing it inside the authenticated block unless explicitly required otherwise.
 
 ---
 
@@ -434,9 +614,8 @@ in the project. Use literal JSON strings as fixtures. Affected fields:
 
 - **Never expose raw upstream errors to clients** — normalize all upstream failures to a generic error
   response; log the real error with context
-- **FatSecret token mutex is mandatory** — without a `Mutex`, concurrent requests will race to refresh
-  the OAuth2 token, causing double-refresh and potential token invalidation
-- **Gemini context cache mutex is mandatory** — same race condition risk as FatSecret token
+- **FatSecret is currently NOT wired into `FoodService`** — the client + token manager + mapper are retained for reference but not constructed in `Application.module()`. Do not re-wire without updating this doc. The `Mutex` contract still applies if it is re-enabled.
+- **Gemini context cache mutex is mandatory** — without a `Mutex`, concurrent requests will race to refresh the cache ID, causing double-refresh and potential invalidation
 - **USDA search uses GET** with query params (not POST)
 - **OFF barcode uses `/api/v3/product/{code}`** — response `status` is now a string `"success"`, not integer `1`
 - **OFF search uses `https://search.openfoodfacts.org/search`** (search-a-licious) — response has `hits` (not `products`), `brands` is `List<String>` (not a comma-separated string), page is 1-indexed
@@ -474,18 +653,24 @@ Key dependencies:
 ```kotlin
 dependencies {
     implementation(libs.ktor.server.auth)
+    implementation(libs.ktor.server.auth.jwt)          // JWKS verification + `jwt { }` provider
     implementation(libs.ktor.server.core)
     implementation(libs.ktor.server.content.negotiation)
     implementation(libs.ktor.serialization.kotlinx.json)
     implementation(libs.ktor.server.status.pages)
+    implementation(libs.ktor.server.rate.limit)        // per-user rate limiting
+    implementation(libs.google.api.client)             // transitive helpers used by upstream clients
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.ktor.server.netty)
     implementation(libs.logback.classic)
     implementation(libs.dotenv.kotlin)
-    implementation(libs.bundles.ktor.client)   // core, cio, content-negotiation, logging, auth
+    implementation(libs.bundles.ktor.client)           // core, cio, content-negotiation, logging, auth
 
     testImplementation(libs.ktor.server.test.host)
+    testImplementation(libs.ktor.client.mock)
     testImplementation(libs.kotlin.test.junit)
 }
 ```
+
+Note: `com.auth0:jwk` / `com.auth0:java-jwt` come in transitively via `ktor-server-auth-jwt` — do not add them explicitly.

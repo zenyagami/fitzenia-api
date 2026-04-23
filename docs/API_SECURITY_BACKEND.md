@@ -10,41 +10,53 @@
 
 | Concern | Status |
 |---|---|
-| Auth on `/api/food/*` | None — fully open |
-| Rate limiting | None |
-| Request size limits | None |
-| Input validation HTTP codes | All errors return 500 |
-| `ktor-server-auth` | Imported but not installed |
-| CORS | Not configured |
-| Cloud Armor / WAF | Not configured |
+| Auth on `/api/food/*` and `/api/user/*` | ✅ Supabase JWT (JWKS, per-user) |
+| Rate limiting | ✅ Per-user: 200 req/min food search, 20 req/min image analysis |
+| Request size limits | ❌ None |
+| Input validation HTTP codes | ✅ Fixed — 400/401/502/500 |
+| `ktor-server-auth` | ✅ Installed and configured (JWKS + REMOTE fallback) |
+| CORS | ❌ Not configured |
+| Cloud Armor / WAF | ❌ Not configured |
 
 ---
 
-## Layer 0 — Fix HTTP status codes (quick win, no deps)
+## Layer 0 — Fix HTTP status codes ✅ DONE
 
-**What it does:** Currently all input errors (`IllegalArgumentException`, missing params, bad barcode format) return 500. This is wrong — 500 means server fault; client errors must return 4xx. Fixing this also makes rate-limit and auth error responses consistent.
+**What it does:** Maps domain exceptions to appropriate HTTP status codes. Client errors return 4xx; upstream dependency failures return 502; unhandled server faults return 500. Stack traces never reach clients.
 
 ### Implementation
 
-In `Application.kt`, update the `StatusPages` block:
+In `Application.kt`, `configureStatusPages()`:
 
 ```kotlin
-install(StatusPages) {
-    exception<IllegalArgumentException> { call, cause ->
-        call.respond(HttpStatusCode.BadRequest, ErrorResponse(cause.message ?: "Bad request"))
-    }
-    exception<ContentTransformationException> { call, cause ->
-        call.respond(HttpStatusCode.BadRequest, ErrorResponse("Invalid request body"))
-    }
-    exception<NotFoundException> { call, _ ->
-        call.respond(HttpStatusCode.NotFound, ErrorResponse("Not found"))
-    }
-    exception<Throwable> { call, cause ->
-        call.application.log.error("Unhandled error", cause)
-        call.respond(HttpStatusCode.InternalServerError, ErrorResponse("Internal server error"))
+fun Application.configureStatusPages() {
+    install(StatusPages) {
+        exception<IllegalArgumentException> { call, cause ->
+            call.respond(HttpStatusCode.BadRequest, ErrorResponse(cause.message ?: "Bad request"))
+        }
+        exception<BadRequestException> { call, _ ->
+            call.respond(HttpStatusCode.BadRequest, ErrorResponse("Bad request"))
+        }
+        exception<ContentTransformationException> { call, _ ->
+            call.respond(HttpStatusCode.BadRequest, ErrorResponse("Invalid request body"))
+        }
+        exception<UnauthorizedException> { call, cause ->
+            call.respond(HttpStatusCode.Unauthorized, ErrorResponse(cause.message ?: "Unauthorized"))
+        }
+        exception<UpstreamFailureException> { call, cause ->
+            call.application.log.error("Upstream dependency failure", cause)
+            call.respond(HttpStatusCode.BadGateway, ErrorResponse("Upstream dependency failure"))
+        }
+        exception<Throwable> { call, cause ->
+            call.application.log.error("Unhandled error", cause)
+            call.respond(HttpStatusCode.InternalServerError, ErrorResponse("Internal server error"))
+        }
     }
 }
+```
 
+`ErrorResponse` is defined in `src/main/kotlin/com/zenthek/model/UserProfile.kt`:
+```kotlin
 @Serializable
 data class ErrorResponse(val error: String)
 ```
@@ -53,9 +65,9 @@ data class ErrorResponse(val error: String)
 
 ---
 
-## Layer 1 — Request size limits (implement immediately)
+## Layer 1 — Request size limits ❌ NOT YET
 
-**What it does:** The `/analyze-image` endpoint accepts a base64-encoded image with no size limit. A malicious client can send a 100MB payload, blocking a Coroutine thread and driving up Cloud Run memory. Cap incoming bodies.
+**What it does:** The `/analyze-image` and `/analyze-image-stream` endpoints accept a base64-encoded image with no size limit. A malicious client can send a 100MB payload, blocking a Coroutine thread and driving up Cloud Run memory. Cap incoming bodies.
 
 ### Limits
 
@@ -69,30 +81,8 @@ A 3MP photo at JPEG 75% quality is ~600KB uncompressed → ~800KB base64-encoded
 
 ### Implementation
 
-Ktor does not have a single plugin for per-route body size limits in 3.x. Use `maxRequestBodySize` on the Netty engine config, or check `Content-Length` before receiving the body in the route:
+Validate `Content-Length` at the route level before calling `receive<>()`:
 
-```kotlin
-// In Application.kt — Netty engine config
-embeddedServer(Netty, configure = {
-    maxInitialLineLength = 4096
-    maxHeaderSize = 8192
-    maxChunkSize = 5 * 1024 * 1024  // 5 MB
-}) { ... }
-```
-
-For the default `EngineMain` setup (via `application.conf`), add to `application.conf`:
-```hocon
-ktor {
-    deployment {
-        port = ${?PORT}
-    }
-    application {
-        modules = [ com.zenthek.fitzenio.rest.ApplicationKt.module ]
-    }
-}
-```
-
-Then validate `Content-Length` at the route level before calling `receive<>()`:
 ```kotlin
 post("/analyze-image") {
     val contentLength = call.request.contentLength() ?: 0L
@@ -109,51 +99,63 @@ post("/analyze-image") {
 
 ---
 
-## Layer 2 — Rate limiting (implement immediately)
+## Layer 2 — Rate limiting ✅ DONE
 
-**What it does:** Limits the number of requests a single client can make per time window. Protects upstream API quotas (FatSecret, USDA, Gemini, OpenAI) and controls Cloud Run costs.
+**What it does:** Limits the number of requests a single authenticated user can make per time window. Protects upstream API quotas (Open Food Facts, USDA, Gemini, OpenAI) and controls Cloud Run costs.
 
 ### Rate limit values
 
-| Endpoint group | Limit (per IP) | Limit (per authenticated user) |
-|---|---|---|
-| `/api/food/search`, `/autocomplete`, `/barcode/*` | 60 req/min | 200 req/min |
-| `/api/food/analyze-image*` | 10 req/min | 20 req/min |
-| `/health` | Unlimited | Unlimited |
+| Endpoint group | Limit (per authenticated user) |
+|---|---|
+| `/api/food/search`, `/search/stream`, `/autocomplete`, `/barcode/*` | 200 req/min |
+| `/api/food/analyze-image`, `/analyze-image-stream` | 20 req/min |
+| `/health`, `/api/user/*` | Unlimited |
 
 ### Implementation
 
-Ktor has a built-in `RateLimit` plugin since 2.3 (`ktor-server-rate-limit`).
-
-Add to `gradle/libs.versions.toml`:
+`ktor-server-rate-limit` is already in `gradle/libs.versions.toml`:
 ```toml
 ktor-server-rate-limit = { module = "io.ktor:ktor-server-rate-limit", version.ref = "ktor" }
 ```
 
-In `Application.kt`:
+In `Application.kt`, `configureRateLimit()`:
 ```kotlin
-install(RateLimit) {
-    // Food search/barcode/autocomplete — by IP
-    register(RateLimitName("food-search")) {
-        rateLimiter(limit = 60, refillPeriod = 1.minutes)
-        requestKey { call -> call.request.origin.remoteHost }
+fun Application.configureRateLimit() {
+    install(RateLimit) {
+        register(RateLimitName(RateLimitNames.FOOD_SEARCH)) {
+            rateLimiter(limit = 200, refillPeriod = 1.minutes)
+            requestKey { call -> call.authenticatedUserIdOrFail() }
+        }
+        register(RateLimitName(RateLimitNames.IMAGE_ANALYSIS)) {
+            rateLimiter(limit = 20, refillPeriod = 1.minutes)
+            requestKey { call -> call.authenticatedUserIdOrFail() }
+        }
     }
-    // Image analysis — by IP (stricter)
-    register(RateLimitName("image-analysis")) {
-        rateLimiter(limit = 10, refillPeriod = 1.minutes)
-        requestKey { call -> call.request.origin.remoteHost }
-    }
+}
+
+private fun ApplicationCall.authenticatedUserIdOrFail(): String {
+    return principal<AuthenticatedUserContext>()?.userId
+        ?: throw UnauthorizedException("Authentication required")
 }
 ```
 
-Apply in routes:
+Rate limit name constants live in `Routing.kt`:
 ```kotlin
-rateLimit(RateLimitName("food-search")) {
-    get("/search") { ... }
+object RateLimitNames {
+    const val FOOD_SEARCH = "food-search"
+    const val IMAGE_ANALYSIS = "image-analysis"
+}
+```
+
+Applied in `Routing.kt` inside the `authenticate` block:
+```kotlin
+rateLimit(RateLimitName(RateLimitNames.FOOD_SEARCH)) {
     get("/autocomplete") { ... }
+    get("/search") { ... }
+    get("/search/stream") { ... }
     get("/barcode/{barcode}") { ... }
 }
-rateLimit(RateLimitName("image-analysis")) {
+rateLimit(RateLimitName(RateLimitNames.IMAGE_ANALYSIS)) {
     post("/analyze-image") { ... }
     post("/analyze-image-stream") { ... }
 }
@@ -162,26 +164,16 @@ rateLimit(RateLimitName("image-analysis")) {
 ### Cloud Run caveat
 Rate limiting is per-instance. Cloud Run may run multiple instances concurrently. The per-instance limit is effectively `N * limit` globally. This is acceptable for MVP — Cloud Run scales slowly (min 0 replicas, scales out over seconds). For true global rate limiting at scale, use **Redis (Cloud Memorystore)** as a shared counter store.
 
-### Real IP extraction
-Cloud Run injects the client IP in the `X-Forwarded-For` header. Use it instead of `remoteHost` (which returns the Cloud Run load balancer IP):
-```kotlin
-requestKey { call ->
-    call.request.headers["X-Forwarded-For"]?.split(",")?.firstOrNull()?.trim()
-        ?: call.request.origin.remoteHost
-}
-```
-
 **File:** `src/main/kotlin/Application.kt`
 **File:** `src/main/kotlin/com/zenthek/routes/Routing.kt`
-**File:** `gradle/libs.versions.toml`
 
 ---
 
-## Layer 3 — Shared API Key validation (implement immediately)
+## Layer 3 — Shared API Key validation ❌ NOT YET
 
 **What it does:** Every request to `/api/food/*` must include a valid `X-API-Key` header matching a secret stored in Cloud Secret Manager. Rejects requests from any client that is not the Fitzenio app (or a developer with the key).
 
-**What it does NOT do:** Prevent a determined attacker who extracts the key from the APK. Combined with Layer 5 (JWT auth), this becomes much stronger.
+**What it does NOT do:** Prevent a determined attacker who extracts the key from the APK. Combined with Layer 4 (JWT auth), this becomes much stronger.
 
 ### Implementation
 
@@ -206,18 +198,17 @@ data class AppConfig(
 object ConfigLoader {
     fun loadConfig(): AppConfig = AppConfig(
         // existing...
-        appApiKey = env["APP_API_KEY"] ?: error("APP_API_KEY is required"),
+        appApiKey = env("APP_API_KEY") ?: error("APP_API_KEY is required"),
     )
 }
 ```
 
-Create a custom Ktor plugin (simpler than the Authentication plugin for a static key check):
+Create a custom Ktor plugin:
 ```kotlin
 // src/main/kotlin/plugins/ApiKeyPlugin.kt
 val ApiKeyPlugin = createApplicationPlugin("ApiKey") {
     val expectedKey = application.environment.config
         .property("ktor.security.apiKey").getString()
-    // Or pass via constructor if using Application.module() pattern
 
     onCall { call ->
         val key = call.request.headers["X-API-Key"]
@@ -229,7 +220,7 @@ val ApiKeyPlugin = createApplicationPlugin("ApiKey") {
 }
 ```
 
-Apply to the `/api/food` route group only (not `/health`).
+Apply to the `/api/food` route group only (not `/health` or `/api/user`).
 
 ### Key rotation grace period
 When rotating keys, support two valid keys simultaneously for 30 days (old + new). Store as `APP_API_KEY` and `APP_API_KEY_PREV` in Secret Manager. Accept either value. After 30 days, remove `APP_API_KEY_PREV`.
@@ -240,9 +231,41 @@ When rotating keys, support two valid keys simultaneously for 30 days (old + new
 
 ---
 
-## Layer 4 — Supabase JWT validation (implement before public launch)
+## Layer 4 — Supabase JWT validation ✅ DONE
 
-**What it does:** Requires every request to `/api/food/*` to include a valid Supabase access token in the `Authorization: Bearer <jwt>` header. The backend verifies the JWT against Supabase's public JWKS endpoint. Ties every API call to a real authenticated user — enables per-user rate limiting and user-level ban enforcement.
+**What it does:** Every request to `/api/food/*` and `/api/user/*` must include a valid Supabase access token in the `Authorization: Bearer <jwt>` header. In JWKS mode (default), the backend verifies the JWT signature locally against Supabase's cached public keys. In REMOTE mode (fallback), it calls Supabase's `/auth/v1/user` on every request.
+
+### Verification modes
+
+Controlled by `SUPABASE_JWT_VERIFICATION_MODE` (default `JWKS`):
+
+| Mode | Behavior | When to use |
+|---|---|---|
+| `JWKS` | Verifies signature locally against Supabase's JWKS (cached 10 min, rate-limited 10/min). Validates `iss = ${SUPABASE_URL}/auth/v1`, `aud = authenticated`, 30s clock leeway. | **Default.** Zero per-request network cost, scales cleanly. |
+| `REMOTE` | On every request, calls `GET ${SUPABASE_URL}/auth/v1/user` with the bearer token. Logs a startup warning. | Temporary fallback only — every request adds an upstream hop. |
+
+On startup, the app probes the JWKS endpoint (JWKS mode only) and logs reachability — a failed probe is a warning, not a fatal error.
+
+### Principal
+
+A successful validation produces an `AuthenticatedUserContext`:
+
+```kotlin
+data class AuthenticatedUserContext(
+    val userId: String,     // JWT `sub`
+    val email: String?,
+    val name: String?,      // JWT user_metadata.name / full_name
+    val avatarUrl: String?, // JWT user_metadata.avatar_url / picture
+    val role: String,       // must equal "authenticated"
+)
+```
+
+Rejection rules (validator returns `null` → 401):
+- `sub` is blank
+- `role` claim is not `"authenticated"`
+- `aud` does not contain `"authenticated"`
+
+The raw bearer token is stashed on the call under `SupabaseAccessTokenKey` so downstream services can forward it to Supabase REST for RLS-scoped queries.
 
 ### How Supabase JWTs work
 
@@ -257,76 +280,100 @@ Standard JWT claims:
 - `exp` — expiry timestamp
 - `role` — `authenticated` for logged-in users
 
+Issuer and JWKS URL are derived from `SUPABASE_URL` in `SupabaseConfig`:
+```kotlin
+val issuer: String = "$normalizedUrl/auth/v1"
+val jwksUrl: String = "$issuer/.well-known/jwks.json"
+```
+
 ### Implementation
 
-Add `ktor-server-auth-jwt` to `gradle/libs.versions.toml`:
-```toml
-ktor-server-auth-jwt = { module = "io.ktor:ktor-server-auth-jwt", version.ref = "ktor" }
-```
+In `auth/SupabaseAuthentication.kt`, `configureAuthentication()`:
 
-In `Application.kt`:
 ```kotlin
-install(Authentication) {
-    jwt("supabase-jwt") {
-        realm = "fitzenio-api"
-        verifier(
-            jwkProvider = JwkProviderBuilder(URL("https://<project-ref>.supabase.co/auth/v1/.well-known/jwks.json"))
-                .cached(10, 10, TimeUnit.MINUTES)
-                .rateLimited(10, 1, TimeUnit.MINUTES)
-                .build(),
-            issuer = "https://<project-ref>.supabase.co/auth/v1"
-        )
-        validate { credential ->
-            if (
-                credential.payload.subject.isNotBlank() &&
-                credential.payload.audience.contains("authenticated") &&
-                credential.payload.getClaim("role").asString() == "authenticated"
-            ) {
-                JWTPrincipal(credential.payload)
-            } else null
-        }
-        challenge { _, _ ->
-            call.respond(HttpStatusCode.Unauthorized, ErrorResponse("Authentication required"))
+fun Application.configureAuthentication(
+    supabaseConfig: SupabaseConfig,
+    supabaseGateway: SupabaseGateway,
+    jwkProvider: JwkProvider = buildSupabaseJwkProvider(supabaseConfig),
+) {
+    install(Authentication) {
+        when (supabaseConfig.jwtVerificationMode) {
+            SupabaseJwtVerificationMode.JWKS -> {
+                jwt(SUPABASE_AUTH_PROVIDER) {
+                    realm = "fitzenio-api"
+                    verifier(jwkProvider, supabaseConfig.issuer) {
+                        withAudience("authenticated")
+                        acceptLeeway(30)
+                    }
+                    validate { credential ->
+                        if (!credential.payload.audience.contains("authenticated")) return@validate null
+                        val userMetadata = credential.payload.getClaim("user_metadata").toUserMetadata()
+                        val context = createAuthenticatedUserContext(
+                            userId = credential.payload.subject,
+                            email = credential.payload.getClaim("email").asString(),
+                            name = userMetadata.name,
+                            avatarUrl = userMetadata.avatarUrl,
+                            role = credential.payload.getClaim("role").asString(),
+                        ) ?: return@validate null
+                        extractBearerToken(request.headers[HttpHeaders.Authorization])
+                            ?.let { attributes.put(SupabaseAccessTokenKey, it) }
+                        context
+                    }
+                    challenge { _, _ ->
+                        call.respond(HttpStatusCode.Unauthorized, ErrorResponse("Authentication required"))
+                    }
+                }
+            }
+            SupabaseJwtVerificationMode.REMOTE -> {
+                bearer(SUPABASE_AUTH_PROVIDER) {
+                    realm = "fitzenio-api"
+                    authenticate { credential ->
+                        supabaseGateway.fetchAuthenticatedUser(credential.token).getOrNull()?.let { user ->
+                            val context = createAuthenticatedUserContext(
+                                userId = user.id, email = user.email,
+                                name = user.name, avatarUrl = user.avatarUrl,
+                                role = "authenticated",
+                            ) ?: return@authenticate null
+                            attributes.put(SupabaseAccessTokenKey, credential.token)
+                            context
+                        }
+                    }
+                }
+            }
         }
     }
 }
+
+fun buildSupabaseJwkProvider(supabaseConfig: SupabaseConfig): JwkProvider =
+    JwkProviderBuilder(URI(supabaseConfig.jwksUrl).toURL())
+        .cached(10, 10, TimeUnit.MINUTES)
+        .rateLimited(10, 1, TimeUnit.MINUTES)
+        .build()
 ```
 
-Apply to all `/api/food/*` routes:
+Applied to all `/api/food/*` and `/api/user/*` routes in `Routing.kt`:
 ```kotlin
-authenticate("supabase-jwt") {
-    route("/api/food") {
-        get("/search") { ... }
-        get("/autocomplete") { ... }
-        get("/barcode/{barcode}") { ... }
-        post("/analyze-image") { ... }
-        post("/analyze-image-stream") { ... }
-    }
+authenticate(SUPABASE_AUTH_PROVIDER) {
+    route("/api/food") { configureFoodRoutes(...) }
+    route("/api/user") { configureUserRoutes(...) }
 }
 ```
 
-Extract userId for per-user rate limiting:
+Extract userId for logging and rate limiting:
 ```kotlin
-val userId = call.principal<JWTPrincipal>()?.payload?.subject
+val user = call.requireAuthenticatedUser()  // throws UnauthorizedException if missing
+val token = call.requireBearerAccessToken() // for forwarding to Supabase REST
 ```
 
 ### JWKS caching
-Keep the in-process JWKS cache short-lived (10 minutes or less) so key rotation is picked up quickly. The `rateLimited` builder prevents thundering-herd on cache miss.
+The in-process JWKS cache is 10 minutes with rate-limiting (10 refreshes/min). This means key rotation is picked up within 10 minutes. The `rateLimited` builder prevents thundering-herd on cache miss.
 
-Derive issuer and JWKS URL from `SUPABASE_URL`:
-```kotlin
-val supabaseUrl = env["SUPABASE_URL"] ?: error("SUPABASE_URL is required")
-val issuer = "${supabaseUrl.trimEnd('/')}/auth/v1"
-val jwksUrl = "$issuer/.well-known/jwks.json"
-```
-
+**File:** `src/main/kotlin/com/zenthek/auth/SupabaseAuthentication.kt`
 **File:** `src/main/kotlin/Application.kt`
-**File:** `src/main/kotlin/config/Environment.kt`
-**File:** `gradle/libs.versions.toml`
 
 ---
 
-## Layer 5 — Play Integrity / App Attest verification endpoint (implement at ~5k DAU)
+## Layer 5 — Play Integrity / App Attest verification endpoint ❌ NOT YET (~5k DAU)
 
 **What it does:** Provides a backend endpoint that verifies Play Integrity tokens (Android) and App Attest assertions (iOS). Returns a short-lived session JWT. This decouples device integrity checks from every food API call — the app calls this endpoint once per session, caches the resulting token, and uses it for subsequent calls.
 
@@ -386,16 +433,16 @@ val sessionToken = JWT.create()
     .sign(Algorithm.HMAC256(integrityJwtSecret))
 ```
 
-The food API routes can then accept EITHER a Supabase JWT (Layer 4) OR this integrity session token, giving flexibility.
+The food API routes can then accept EITHER a Supabase JWT (Layer 4) OR this integrity session token.
 
-**Dry Run Mode:** Controlled by `INTEGRITY_DRY_RUN=true` env var. When enabled, the endpoint logs the full verdict (device model, OS version, verdict string) but always returns a valid session token. Run Dry Run Mode for 2–4 weeks post-rollout to collect real-world false-positive data (custom ROM users, older devices, pre-release builds). Only set `INTEGRITY_DRY_RUN=false` once false-positive rate is confirmed below 1%.
+**Dry Run Mode:** Controlled by `INTEGRITY_DRY_RUN=true` env var. When enabled, the endpoint logs the full verdict (device model, OS version, verdict string) but always returns a valid session token. Run Dry Run Mode for 2–4 weeks post-rollout to collect real-world false-positive data. Only set `INTEGRITY_DRY_RUN=false` once false-positive rate is confirmed below 1%.
 
 **File:** `src/main/kotlin/routes/Routing.kt` (new endpoint)
 **File:** `src/main/kotlin/config/Environment.kt` (new env vars)
 
 ---
 
-## Layer 6 — Google Cloud Armor (implement after launch)
+## Layer 6 — Google Cloud Armor ❌ NOT YET (after launch)
 
 **What it does:** GCP-level WAF and DDoS protection that intercepts malicious traffic before it reaches the Cloud Run service. Zero app code changes required.
 
@@ -436,11 +483,11 @@ gcloud compute security-policies rules create 2000 \
   --exceed-action deny-429
 ```
 
-This complements the per-instance Ktor rate limiting in Layer 2.
+This complements the per-user Ktor rate limiting in Layer 2.
 
 ---
 
-## Layer 7 — Structured logging and abuse alerts (implement after launch)
+## Layer 7 — Structured logging and abuse alerts ❌ NOT YET (after launch)
 
 **What it does:** Logs every request with structured fields that Cloud Logging can query. Sets up Cloud Monitoring alerts for abuse patterns (429 spikes, image analysis cost anomalies, 5xx bursts).
 
@@ -452,7 +499,7 @@ install(CallLogging) {
     level = Level.INFO
     format { call ->
         val status = call.response.status()
-        val userId = call.principal<JWTPrincipal>()?.payload?.subject ?: "anon"
+        val userId = call.principal<AuthenticatedUserContext>()?.userId ?: "anon"
         val ip = call.request.headers["X-Forwarded-For"]
             ?.split(",")?.firstOrNull()?.trim()
             ?: call.request.origin.remoteHost
@@ -475,18 +522,28 @@ Cloud Run forwards stdout to Cloud Logging automatically. The JSON format is par
 
 ---
 
-## Environment variables reference (additions)
+## Environment variables reference
+
+### Implemented
+
+| Variable | Required | Layer | Description |
+|---|---|---|---|
+| `SUPABASE_URL` | Yes | Layer 4 | Supabase project base URL; derive issuer and JWKS URL from it |
+| `SUPABASE_PUBLISHABLE_KEY` | Yes¹ | Layer 4 | Modern Supabase publishable key (preferred) |
+| `SUPABASE_ANON_KEY` / `SUPABASE_DEV_ANON_KEY` | Yes¹ | Layer 4 | Legacy anon JWT fallback |
+| `SUPABASE_JWT_VERIFICATION_MODE` | No (default `JWKS`) | Layer 4 | `JWKS` or `REMOTE` |
+
+¹ At least one of `SUPABASE_PUBLISHABLE_KEY` or the legacy anon key must be present.
+
+### Pending (not yet implemented)
 
 | Variable | Required | Layer | Description |
 |---|---|---|---|
 | `APP_API_KEY` | Yes | Layer 3 | Shared app secret — validate `X-API-Key` header |
 | `APP_API_KEY_PREV` | No | Layer 3 | Previous key during rotation grace period |
-| `SUPABASE_URL` | Yes | Layer 4 | Supabase project base URL; derive issuer and JWKS URL from it |
-| `SUPABASE_PUBLISHABLE_KEY` | Yes | Layer 4 | Public API key used with user JWT for RLS-enforced Supabase requests |
-| `SUPABASE_ANON_KEY` | No | Layer 4 | Temporary legacy fallback only while migrating older Supabase API keys |
 | `INTEGRITY_JWT_SECRET` | Yes | Layer 5 | HMAC secret for signing integrity session tokens |
-| `GOOGLE_APPLICATION_CREDENTIALS` | Yes (Layer 5) | Layer 5 | Path to service account key for Play Integrity API |
-| `INTEGRITY_DRY_RUN` | No (default `true`) | Layer 5 | When `true`, log integrity failures but always grant access (Dry Run Mode) |
+| `GOOGLE_APPLICATION_CREDENTIALS` | Yes | Layer 5 | Path to service account key for Play Integrity API |
+| `INTEGRITY_DRY_RUN` | No (default `true`) | Layer 5 | When `true`, log integrity failures but always grant access |
 
 Add all to Cloud Secret Manager and reference in `cloud-run-config.yaml`.
 
@@ -494,16 +551,16 @@ Add all to Cloud Secret Manager and reference in `cloud-run-config.yaml`.
 
 ## Implementation order summary
 
-| Layer | Priority | Effort | Impact |
-|---|---|---|---|
-| 0 — Fix HTTP status codes | Immediate | 30m | Correctness, better error handling |
-| 1 — Request size limits | Immediate | 1h | Prevents resource exhaustion |
-| 2 — Rate limiting | Immediate | 2h | Protects upstream API quotas |
-| 3 — Shared API Key | Immediate | 2h | Stops casual scrapers |
-| 4 — Supabase JWT auth | Before launch | 3h | Per-user auth, real enforcement |
-| 6 — Cloud Armor | After launch | 2h (infra) | GCP-level DDoS + WAF |
-| 7 — Logging + alerts | After launch | 2h | Visibility into abuse |
-| 5 — Play Integrity endpoint | At scale | 1 day | Strongest device-level guarantee |
+| Layer | Status | Priority | Effort | Impact |
+|---|---|---|---|---|
+| 0 — Fix HTTP status codes | ✅ Done | — | — | Correctness, better error handling |
+| 2 — Rate limiting | ✅ Done | — | — | Protects upstream API quotas |
+| 4 — Supabase JWT auth | ✅ Done | — | — | Per-user auth, real enforcement |
+| 1 — Request size limits | ❌ Pending | Immediate | 1h | Prevents resource exhaustion |
+| 3 — Shared API Key | ❌ Pending | Immediate | 2h | Stops casual scrapers |
+| 6 — Cloud Armor | ❌ Pending | After launch | 2h (infra) | GCP-level DDoS + WAF |
+| 7 — Logging + alerts | ❌ Pending | After launch | 2h | Visibility into abuse |
+| 5 — Play Integrity endpoint | ❌ Pending | At scale | 1 day | Strongest device-level guarantee |
 
 ---
 
@@ -515,3 +572,5 @@ Add all to Cloud Secret Manager and reference in `cloud-run-config.yaml`.
 - **Do not return stack traces to clients** — `StatusPages` already prevents this; do not add any `cause.stackTrace` to error responses
 - **Do not block users on integrity check failure from day 1** — log first, enforce later after validating the false-positive rate
 - **Do not share the Ktor `HttpClient` with supabase-kt** — they use separate client instances intentionally
+- **Do not use `JWTPrincipal` directly in route handlers** — use `call.requireAuthenticatedUser()` which returns `AuthenticatedUserContext` and throws `UnauthorizedException` on missing principal
+- **Never log JWTs or access tokens** — they are bearer credentials; also applies to the service role key
