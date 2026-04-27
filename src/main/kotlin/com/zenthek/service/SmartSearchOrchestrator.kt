@@ -595,8 +595,21 @@ class SmartSearchOrchestrator internal constructor(
         return when (classify.decision) {
             ClassifyDecision.MATCH_EXISTING -> {
                 val pickId = classify.candidateIds.firstOrNull()
-                    ?: return AiOutcome.UpstreamOnly
-                AiOutcome.PickExisting(pickId)
+                if (pickId == null) {
+                    log.info(
+                        "[SMART] match_existing_empty_fallback_to_generate query={}",
+                        normalizedQuery
+                    )
+                    runGenerate(
+                        normalizedQuery = normalizedQuery,
+                        locale = locale,
+                        country = country,
+                        hits = hits,
+                        broad = false
+                    )
+                } else {
+                    AiOutcome.PickExisting(pickId)
+                }
             }
             ClassifyDecision.NEED_CREATE_SPECIFIC,
             ClassifyDecision.NEED_CREATE_BROAD -> runGenerate(

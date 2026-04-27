@@ -71,8 +71,8 @@ class OpenFoodFactsClient(private val httpClient: HttpClient) {
         locale: String?,
         country: String?
     ): UpstreamSearchPage = coroutineScope {
-        val langs = extractLangs(locale)
         val countryTag = countryToTag(country)
+        val langs = buildLangs(locale, country)
 
         if (countryTag == null) {
             log.info(
@@ -121,7 +121,9 @@ class OpenFoodFactsClient(private val httpClient: HttpClient) {
         filterCountryTag: String?
     ): UpstreamSearchPage {
         val effectiveQuery = if (filterCountryTag != null) {
-            "${query.trim()} AND countries_tags:\"$filterCountryTag\""
+            // Implicit AND via space — explicit `AND` confuses search-a-licious's Luqum parser
+            // for multi-word free text and silently produces zero hits.
+            "${query.trim()} countries_tags:\"$filterCountryTag\""
         } else {
             query
         }
@@ -132,7 +134,7 @@ class OpenFoodFactsClient(private val httpClient: HttpClient) {
             parameter("page_size", pageSize)
             parameter(
                 "fields",
-                "code,product_name,brands,serving_size,serving_quantity,image_url,nutriments,countries_tags"
+                "code,product_name,brands,serving_size,serving_quantity,image_url,nutriments,countries_tags,lang,lc"
             )
             parameter("sort_by", "unique_scans_n")
             if (langs != null) parameter("langs", langs)
@@ -142,7 +144,8 @@ class OpenFoodFactsClient(private val httpClient: HttpClient) {
             return UpstreamSearchPage.EMPTY
         }
         val dto = response.body<OpenFoodFactsV3SearchResponse>()
-        val items = dto.hits.mapNotNull { OpenFoodFactsMapper.mapV3SearchWithKind(it) }
+        val rankedHits = stableRankByLanguage(dto.hits, langs)
+        val items = rankedHits.mapNotNull { OpenFoodFactsMapper.mapV3SearchWithKind(it) }
         val offPageOneIndexed = (page + 1).coerceAtLeast(1)
         val hasMore = dto.count > offPageOneIndexed * pageSize
         log.info(
@@ -184,6 +187,61 @@ class OpenFoodFactsClient(private val httpClient: HttpClient) {
     }
 
     /**
+     * Build the OFF `langs` parameter as a comma-separated list combining the
+     * country's primary language, the user's locale language, and English as
+     * a final fallback. This widens the language fields OFF searches so a
+     * German user typing "olive oil" can still match a product whose name is
+     * "Olivenöl" via the German fields. Order matters — earlier langs influence
+     * scoring more.
+     */
+    private fun buildLangs(locale: String?, country: String?): String? {
+        val ordered = linkedSetOf<String>()
+        countryPrimaryLang(country)?.let { ordered.add(it) }
+        extractLangs(locale)?.let { ordered.add(it) }
+        ordered.add("en")
+        return ordered.joinToString(",").takeIf { it.isNotBlank() }
+    }
+
+    /**
+     * Map an ISO 3166-1 alpha-2 country code to its primary ISO 639-1 language.
+     * Hand-curated for the markets we support — covers Western Europe, North/South
+     * America, and a few key Asian markets. Returns null when unknown so the caller
+     * falls back to the locale-derived language only.
+     */
+    /**
+     * Stable-rank OFF hits so products native to the user's preferred languages
+     * come first. Uses each hit's primary `lang` (or `lc` fallback) compared
+     * against the comma-separated `langsCsv` we sent on the request. Hits whose
+     * primary language matches earlier-listed langs rank higher; unknown-language
+     * hits go last. Within the same bucket, OFF's relevance order is preserved.
+     */
+    private fun stableRankByLanguage(
+        hits: List<com.zenthek.upstream.openfoodfacts.dto.OpenFoodFactsV3SearchProduct>,
+        langsCsv: String?
+    ): List<com.zenthek.upstream.openfoodfacts.dto.OpenFoodFactsV3SearchProduct> {
+        val priorities = langsCsv
+            ?.split(',')
+            ?.map { it.trim().lowercase() }
+            ?.filter { it.isNotEmpty() }
+            ?: return hits
+        if (priorities.isEmpty()) return hits
+        val unknownRank = priorities.size
+        return hits.withIndex()
+            .sortedBy { (idx, hit) ->
+                val hitLang = (hit.lang ?: hit.lc)?.trim()?.lowercase()
+                val rank = if (hitLang == null) unknownRank
+                else priorities.indexOf(hitLang).let { if (it == -1) unknownRank else it }
+                rank.toLong() * 1_000_000L + idx.toLong()
+            }
+            .map { it.value }
+    }
+
+    private fun countryPrimaryLang(country: String?): String? {
+        val iso = country?.trim()?.uppercase()?.takeIf { it.length == 2 && it.all(Char::isLetter) } ?: return null
+        return COUNTRY_PRIMARY_LANG[iso]
+    }
+
+    /**
      * Converts an ISO 3166-1 alpha-2 code into OFF's countries_tags slug format.
      * `DE` → `en:germany`, `US` → `en:united-states`, `MX` → `en:mexico`.
      * Returns null for `null`, `GLOBAL`, or any code Java's Locale doesn't recognize.
@@ -196,5 +254,34 @@ class OpenFoodFactsClient(private val httpClient: HttpClient) {
             ?.takeIf { it.isNotBlank() }
             ?: return null
         return "en:" + englishName.lowercase().replace(Regex("\\s+"), "-")
+    }
+
+    private companion object {
+        private val COUNTRY_PRIMARY_LANG: Map<String, String> = mapOf(
+            // Europe
+            "DE" to "de", "AT" to "de", "CH" to "de",
+            "FR" to "fr", "BE" to "fr", "LU" to "fr",
+            "IT" to "it",
+            "ES" to "es",
+            "PT" to "pt",
+            "NL" to "nl",
+            "PL" to "pl",
+            "SE" to "sv", "NO" to "no", "DK" to "da", "FI" to "fi",
+            "GR" to "el",
+            "CZ" to "cs", "SK" to "sk", "HU" to "hu", "RO" to "ro", "BG" to "bg",
+            "RU" to "ru", "UA" to "uk", "TR" to "tr",
+            "GB" to "en", "IE" to "en",
+            // Americas
+            "US" to "en", "CA" to "en",
+            "MX" to "es", "AR" to "es", "CL" to "es", "CO" to "es", "PE" to "es", "VE" to "es",
+            "BR" to "pt",
+            // Asia / Oceania
+            "JP" to "ja", "KR" to "ko", "CN" to "zh", "TW" to "zh", "HK" to "zh",
+            "IN" to "en", "ID" to "id", "MY" to "ms", "TH" to "th", "VN" to "vi", "PH" to "en",
+            "AU" to "en", "NZ" to "en",
+            // Middle East / Africa
+            "SA" to "ar", "AE" to "ar", "EG" to "ar", "IL" to "he",
+            "ZA" to "en"
+        )
     }
 }

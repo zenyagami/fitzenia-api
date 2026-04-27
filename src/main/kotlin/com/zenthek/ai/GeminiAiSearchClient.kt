@@ -131,8 +131,8 @@ class GeminiAiSearchClient(
             $inputPayloadJson
 
             Decide one of:
-            - MATCH_EXISTING: one of the hits with kind="GENERIC" is clearly the canonical answer. Return its id in candidate_ids.
-            - NEED_CREATE_SPECIFIC: the query names a single specific food (e.g. "cheesecake", "flat white") and no clean generic exists in the hits. Synthesis of one canonical is needed.
+            - MATCH_EXISTING: ONLY when at least one hit has kind="GENERIC" AND its name is essentially the same canonical food as the query. You MUST return that hit's exact id in candidate_ids (non-empty). NEVER pick MATCH_EXISTING with kind="BRANDED" hits, and NEVER pick MATCH_EXISTING with an empty candidate_ids — choose NEED_CREATE_SPECIFIC instead in those cases.
+            - NEED_CREATE_SPECIFIC: the query names a single specific food (e.g. "cheesecake", "flat white", "olive oil") and no clean GENERIC hit matches. Synthesis of one canonical is needed. This is the correct choice whenever the upstream hits are all BRANDED, even if many of them name the same food — the canonical must be unbranded.
             - NEED_CREATE_BROAD: the query is a category with multiple distinct common variants (e.g. "sandwich" → chicken/tuna/beef). Synthesis of 2-3 canonical variants is needed.
 
             Respond in strict JSON matching the schema. confidence is 0.0-1.0.

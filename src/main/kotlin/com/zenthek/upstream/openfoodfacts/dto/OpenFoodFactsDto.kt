@@ -43,7 +43,12 @@ data class OpenFoodFactsV3SearchProduct(
     // OFF returns tags like ["en:france", "en:germany"] indicating markets the
     // product is sold in. The OFF client re-ranks hits so items matching the
     // user's country come first, preserving original order within each bucket.
-    @SerialName("countries_tags") val countriesTags: List<String>? = null
+    @SerialName("countries_tags") val countriesTags: List<String>? = null,
+    // OFF's primary product language code (ISO 639-1, e.g. "de", "fr", "en").
+    // Used by the OFF client to bucket-rank hits so products native to the
+    // user's country/locale come before foreign-language entries.
+    val lang: String? = null,
+    val lc: String? = null
 )
 
 @Serializable
