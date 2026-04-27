@@ -73,7 +73,9 @@
       "mcp__supabase-production__list_migrations",
       "Bash(rtk find *)",
       "Bash(rtk ls *)",
-      "Bash(./gradlew compileKotlin -q)"
+      "Bash(./gradlew compileKotlin -q)",
+      "Bash(xargs ls *)",
+      "mcp__supabase-development__get_logs"
     ]
   },
   "enableAllProjectMcpServers": true,

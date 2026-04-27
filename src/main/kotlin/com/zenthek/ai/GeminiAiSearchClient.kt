@@ -159,7 +159,19 @@ class GeminiAiSearchClient(
             Rules:
             - Synthesize a CANONICAL (unbranded, typical-preparation) version of this food. Do NOT copy a specific brand.
             - Ground macros against the upstream hits. If hits disagree by more than 30%, lower the confidence.
-            - MUST include a serving named "100g" with weight_grams=100 as the first serving. Other servings (e.g. "1 slice (80g)") may follow but "100g" is required.
+            - MUST include a serving named "100g" with weight_grams=100 as the first serving. "100g" is always required.
+            - Servings rule (IMPORTANT): "100g" is a foundational reference, but most foods are NOT eaten by weight in real life. You MUST add at least one realistic household serving in addition to "100g" whenever the food has a natural unit. Examples (non-exhaustive):
+                * Whole fruits / vegetables eaten as units → "1 medium (Xg)" or "1 piece (Xg)" (orange ~130g, kiwi ~75g, apple ~180g, banana ~118g, tomato ~125g).
+                * Composed items eaten as a unit → "1 sandwich (Xg)", "1 burger (Xg)", "1 slice (Xg)" (bread ~30g, pizza ~110g), "1 wrap (Xg)", "1 burrito (Xg)", "1 taco (Xg)", "1 muffin (Xg)", "1 cookie (Xg)", "1 donut (Xg)".
+                * Eggs / dairy units → "1 large egg (50g)", "1 slice cheese (20g)".
+                * Drinks / liquids → "1 cup (240g)", "1 glass (200g)", "1 bottle (Xg)".
+                * Condiments / oils / sauces / spreads → "1 tbsp (Xg)" (olive oil 14g, peanut butter 16g, mayo 14g, ketchup 17g) and/or "1 tsp (Xg)".
+                * Cooked grains / pasta / rice → "1 cup cooked (Xg)" (rice ~158g, pasta ~140g, oatmeal ~234g).
+                * Nuts / chips / popcorn → "1 oz (28g)" or "1 handful (~30g)".
+              For broad queries ("sandwich"), each variant must follow this rule independently.
+              Foods truly sold and measured only by weight (flour, sugar, raw ground meat, deli meat by weight, bulk cheese, raw vegetables sold loose) MAY have only "100g" — but prefer to add a typical household measure when one is common (e.g. "1 cup flour (125g)").
+              Pick weights from typical real-world references; avoid round-number guesses that contradict reality.
+              Per-unit nutrition values must be scaled correctly from the 100g values (e.g. a 75g kiwi has ~75% of 100g calories), all non-negative.
             - All macros must be non-negative. Calories must be consistent with macros: calories ≈ 4*protein + 4*carbs + 9*fat (within 20%).
             - ALWAYS populate fiber_g, sodium_mg, sugar_g, saturated_fat_g, cholesterol_mg, potassium_mg, calcium_mg, and iron_mg on the 100g serving. These are standard nutrition-label fields. Estimate from upstream hits when available, otherwise use typical values for this food category. Only leave them null if you have strong reason to believe the food genuinely lacks that nutrient AND no reasonable estimate exists (rare — e.g. pure oils have 0g protein/carbs/fiber/sugar, not null).
             - Use 0.0 (not null) when a nutrient is meaningfully absent (e.g. sugar_g=0 for pure olive oil). Reserve null for "genuinely unknown and not estimable".
