@@ -194,15 +194,22 @@ class SmartSearchOrchestrator internal constructor(
         val aiOutcome = runAi(normalized, locale, resolvedCountry, upstream.items)
 
         return@coroutineScope when (aiOutcome) {
-            is AiOutcome.UpstreamOnly -> assembleResponse(
-                bestMatch = null,
-                candidates = emptyList(),
-                generic = promotedGeneric,
-                branded = remainingBranded,
-                upstreamHasMore = upstream.hasMore,
-                page = page,
-                pageSize = pageSize
-            )
+            is AiOutcome.UpstreamOnly -> {
+                // Sync attempt timed out / errored. Fire a background retry so the
+                // catalog still warms for the next user. scheduleBackgroundGeneration
+                // dedupes via inFlightGenerations, so a parallel request for the same
+                // (query, locale, country) won't queue a duplicate.
+                scheduleBackgroundGeneration(normalized, locale, resolvedCountry, upstream.items)
+                assembleResponse(
+                    bestMatch = null,
+                    candidates = emptyList(),
+                    generic = promotedGeneric,
+                    branded = remainingBranded,
+                    upstreamHasMore = upstream.hasMore,
+                    page = page,
+                    pageSize = pageSize
+                )
+            }
             is AiOutcome.PickExisting -> {
                 val pick = upstream.items.firstOrNull { it.foodItem.id == aiOutcome.id }
                     ?: return@coroutineScope assembleResponse(
@@ -350,7 +357,12 @@ class SmartSearchOrchestrator internal constructor(
         // AI runs synchronously from the client's perspective — the request is still open.
         val aiOutcome = runAi(normalized, locale, resolvedCountry, upstream.items)
         val bestMatchPayload = when (aiOutcome) {
-            AiOutcome.UpstreamOnly -> SearchStreamBestMatch(null, emptyList())
+            AiOutcome.UpstreamOnly -> {
+                // Same retry pattern as the non-streaming sync path: warm the catalog
+                // for the next user even though this stream returned a null bestMatch.
+                scheduleBackgroundGeneration(normalized, locale, resolvedCountry, upstream.items)
+                SearchStreamBestMatch(null, emptyList())
+            }
             is AiOutcome.PickExisting -> {
                 val pick = upstream.items.firstOrNull { it.foodItem.id == aiOutcome.id }?.foodItem
                 SearchStreamBestMatch(pick, emptyList())
@@ -584,7 +596,7 @@ class SmartSearchOrchestrator internal constructor(
             withTimeout(config.aiClassifyTimeoutMs) {
                 ai.classify(AiClassifyInput(normalizedQuery, locale, country, hits))
             }
-        } catch (t: TimeoutCancellationException) {
+        } catch (_: TimeoutCancellationException) {
             log.warn("[SMART] ai_timeout stage=classify query={}", normalizedQuery)
             return AiOutcome.UpstreamOnly
         } catch (t: Throwable) {

@@ -97,7 +97,7 @@ private fun parseBoolFlag(value: String?, default: Boolean): Boolean {
 }
 
 private fun loadSmartSearchConfig(): SmartSearchConfig {
-    val enabled = parseBoolFlag(env("SMART_FOOD_SEARCH_ENABLED"), default = false)
+    val enabled = parseBoolFlag(env("SMART_FOOD_SEARCH_ENABLED"), default = true)
     return SmartSearchConfig(
         enabled = enabled,
         usdaEnabled = parseBoolFlag(env("SMART_SEARCH_USDA_ENABLED"), default = true),
@@ -105,7 +105,7 @@ private fun loadSmartSearchConfig(): SmartSearchConfig {
         aiGenerateModel = env("AI_SEARCH_GENERATE_MODEL")?.trim()?.ifBlank { null } ?: "gemini-2.5-flash",
         aiClassifyTimeoutMs = env("AI_SEARCH_CLASSIFY_TIMEOUT_MS")?.trim()?.toLongOrNull() ?: 3_000L,
         aiGenerateTimeoutMs = env("AI_SEARCH_GENERATE_TIMEOUT_MS")?.trim()?.toLongOrNull() ?: 8_000L,
-        aiSyncOnMiss = parseBoolFlag(env("SMART_SEARCH_AI_SYNC_ON_MISS"), default = false),
+        aiSyncOnMiss = parseBoolFlag(env("SMART_SEARCH_AI_SYNC_ON_MISS"), default = true),
         catalogWriteConfidenceThreshold = env("CATALOG_WRITE_CONFIDENCE_THRESHOLD")?.trim()?.toFloatOrNull() ?: 0.7f,
     )
 }

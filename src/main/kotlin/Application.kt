@@ -58,7 +58,7 @@ fun Application.module() {
     // Load environment configuration
     val config = ConfigLoader.loadConfig()
 
-    log.info("Starting Fitzenio API in ${config.environment} mode")
+    log.info("Starting Fitzenia API in ${config.environment} mode")
 
     val httpClient = buildHttpClient()
 

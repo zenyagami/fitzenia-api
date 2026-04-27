@@ -94,9 +94,9 @@ spec:
         - name: AI_SEARCH_GENERATE_MODEL
           value: "gemini-2.5-flash"
         - name: AI_SEARCH_CLASSIFY_TIMEOUT_MS
-          value: "3000"
-        - name: AI_SEARCH_GENERATE_TIMEOUT_MS
           value: "8000"
+        - name: AI_SEARCH_GENERATE_TIMEOUT_MS
+          value: "15000"
         - name: CATALOG_WRITE_CONFIDENCE_THRESHOLD
           value: "0.7"
         # Backend-only. Bypasses RLS. Never expose to clients.
