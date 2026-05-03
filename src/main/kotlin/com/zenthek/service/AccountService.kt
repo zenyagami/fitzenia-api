@@ -22,6 +22,7 @@ class AccountService(private val adminGateway: SupabaseAdminGateway) {
 
         log.info("[ACCOUNT] stage=storage started userId={}", userId)
         adminGateway.deleteAllUserStorageObjects(bucket = "progress-photos", userIdPrefix = userId)
+        adminGateway.deleteAllUserStorageObjects(bucket = "ai-progress-ladders", userIdPrefix = userId)
         log.info("[ACCOUNT] stage=storage completed userId={}", userId)
 
         log.info("[ACCOUNT] stage=postgres started userId={}", userId)

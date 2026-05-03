@@ -8,12 +8,17 @@ import com.zenthek.model.ImageAnalysisResponse
 import com.zenthek.model.ImageAnalyzer
 import com.zenthek.model.RegisterUserRequest
 import com.zenthek.service.AccountService
+import com.zenthek.service.AiProgressProjectionService
+import com.zenthek.service.DeleteLadderResult
 import com.zenthek.service.FoodService
+import com.zenthek.service.LadderEventEmitter
 import com.zenthek.model.SearchStreamBestMatch
 import com.zenthek.model.SmartSearchResponse
 import com.zenthek.service.SmartSearchOrchestrator
 import com.zenthek.service.UserProfileService
 import io.ktor.http.*
+import io.ktor.http.content.PartData
+import io.ktor.http.content.forEachPart
 import io.ktor.server.auth.authenticate
 import io.ktor.server.application.*
 import io.ktor.server.plugins.ratelimit.RateLimitName
@@ -29,6 +34,7 @@ object RateLimitNames {
     const val FOOD_SEARCH = "food-search"
     const val IMAGE_ANALYSIS = "image-analysis"
     const val ACCOUNT = "account"
+    const val PROGRESS_PROJECTION = "progress-projection"
 }
 
 private val sseJson = Json { ignoreUnknownKeys = true }
@@ -45,6 +51,7 @@ fun Application.configureRouting(
     imageAnalyzer: ImageAnalyzer,
     userProfileService: UserProfileService,
     accountService: AccountService,
+    aiProgressProjectionService: AiProgressProjectionService,
 ) {
     routing {
         get("/health") {
@@ -67,6 +74,12 @@ fun Application.configureRouting(
                         accountService.deleteAccount(user.userId)
                         call.respond(HttpStatusCode.NoContent)
                     }
+                }
+            }
+
+            rateLimit(RateLimitName(RateLimitNames.PROGRESS_PROJECTION)) {
+                route("/api/progress/ladders") {
+                    configureProgressLadderRoutes(aiProgressProjectionService)
                 }
             }
         }
@@ -265,7 +278,7 @@ fun Route.configureUserRoutes(userProfileService: UserProfileService) {
  * The orchestrator re-validates + rejects CDN sentinels like `XX`/`T1`/`ZZ`,
  * so we don't filter here.
  */
-private fun extractIpCountry(headers: io.ktor.http.Headers): String? {
+private fun extractIpCountry(headers: Headers): String? {
     val candidateHeaders = listOf(
         "Cf-IPCountry",
         "X-Appengine-Country",
@@ -277,4 +290,123 @@ private fun extractIpCountry(headers: io.ktor.http.Headers): String? {
         if (value != null) return value
     }
     return null
+}
+
+/**
+ * AI Progress Projections — bytes-in ladder generator + delete endpoint.
+ * See `AiProgressProjectionService` for the orchestration logic; routes here are thin.
+ */
+fun Route.configureProgressLadderRoutes(service: AiProgressProjectionService) {
+    post("/generate-stream") {
+        val authenticatedUser = call.requireAuthenticatedUser()
+
+        // Drain the multipart form: one `image` file part + optional body-comp text fields.
+        var imageBytes: ByteArray? = null
+        var imageMimeType: String? = null
+        var currentWeightKg: Double? = null
+        var currentBodyFatPercent: Double? = null
+        var targetWeightKg: Double? = null
+        var targetBodyFatPercent: Double? = null
+
+        val multipart = try {
+            call.receiveMultipart()
+        } catch (e: Exception) {
+            log.warn("[PROJECTION] multipart receive failed userId={}", authenticatedUser.userId, e)
+            return@post call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Invalid multipart body"))
+        }
+
+        try {
+            multipart.forEachPart { part ->
+                when (part) {
+                    is PartData.FileItem -> {
+                        if (part.name == "image") {
+                            imageBytes = part.provider().toByteArray()
+                            imageMimeType = part.contentType?.toString() ?: "application/octet-stream"
+                        }
+                    }
+                    is PartData.FormItem -> when (part.name) {
+                        "currentWeightKg"       -> currentWeightKg = part.value.trim().toDoubleOrNull()
+                        "currentBodyFatPercent" -> currentBodyFatPercent = part.value.trim().toDoubleOrNull()
+                        "targetWeightKg"        -> targetWeightKg = part.value.trim().toDoubleOrNull()
+                        "targetBodyFatPercent"  -> targetBodyFatPercent = part.value.trim().toDoubleOrNull()
+                        // locale is reserved for future prompt localization; ignored in v1.
+                    }
+                    else -> { /* binary item etc. — ignored */ }
+                }
+                part.dispose()
+            }
+        } catch (e: Exception) {
+            log.warn("[PROJECTION] multipart parse failed userId={}", authenticatedUser.userId, e)
+            return@post call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Could not parse multipart body"))
+        }
+
+        val bytes = imageBytes
+        val mime = imageMimeType
+        if (bytes == null || mime == null) {
+            return@post call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Missing 'image' file part"))
+        }
+
+        log.info(
+            "[PROJECTION] generate-stream userId={} bytes={} mime={}",
+            authenticatedUser.userId, bytes.size, mime,
+        )
+
+        call.response.header(HttpHeaders.CacheControl, "no-cache")
+        call.respondBytesWriter(contentType = ContentType.Text.EventStream) {
+            // Once the client disconnects, every further sendSseEvent throws
+            // ClosedWriteChannelException. We swallow it and flip this flag so the
+            // orchestration coroutine can finish persisting rungs in the background — the
+            // client picks up the result via Supabase REST + Realtime on reconnect (see
+            // docs/AI_PROGRESS_PROJECTIONS_CLIENT.md "Realtime fallback"). Aborting on
+            // disconnect would leave an orphan PENDING ladder row and brick retries because
+            // of the (user_id, request_key) unique index.
+            var clientConnected = true
+            suspend fun safeSend(event: String, data: String) {
+                if (!clientConnected) return
+                try {
+                    sendSseEvent(event, data)
+                } catch (e: ClosedWriteChannelException) {
+                    clientConnected = false
+                    log.info(
+                        "[PROJECTION] client disconnected mid-stream userId={}; continuing generation in background",
+                        authenticatedUser.userId,
+                    )
+                }
+            }
+
+            try {
+                safeSend("status", """{"phase":"validating"}""")
+                val emitter = LadderEventEmitter { event, payload -> safeSend(event, payload) }
+                service.generate(
+                    userId = authenticatedUser.userId,
+                    sourceBytes = bytes,
+                    mimeType = mime,
+                    requestedCurrentWeightKg = currentWeightKg,
+                    requestedCurrentBodyFatPercent = currentBodyFatPercent,
+                    requestedTargetWeightKg = targetWeightKg,
+                    requestedTargetBodyFatPercent = targetBodyFatPercent,
+                    emitter = emitter,
+                    isClientConnected = { clientConnected },
+                )
+            } catch (e: Exception) {
+                application.log.error("SSE progress/ladders/generate-stream failed", e)
+                if (clientConnected) {
+                    runCatching {
+                        sendSseEvent("error", """{"message":"Generation failed","code":"INTERNAL_ERROR"}""")
+                    }
+                }
+            }
+        }
+    }
+
+    delete("/{ladderId}") {
+        val authenticatedUser = call.requireAuthenticatedUser()
+        val ladderId = call.parameters["ladderId"]
+            ?: return@delete call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Missing ladderId"))
+
+        when (service.delete(authenticatedUser.userId, ladderId)) {
+            DeleteLadderResult.Deleted -> call.respond(HttpStatusCode.NoContent)
+            DeleteLadderResult.NotFoundOrNotOwned -> call.respond(HttpStatusCode.NotFound, mapOf("error" to "Ladder not found"))
+        }
+    }
 }

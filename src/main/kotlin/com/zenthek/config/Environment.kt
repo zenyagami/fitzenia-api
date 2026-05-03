@@ -12,6 +12,7 @@ data class AppConfig(
     val geminiApiKey: String,
     val supabase: SupabaseConfig,
     val smartSearch: SmartSearchConfig,
+    val aiProgressProjection: AiProgressProjectionConfig,
 )
 
 data class ApiKeys(
@@ -31,6 +32,29 @@ data class SmartSearchConfig(
     val aiGenerateTimeoutMs: Long,               // AI_SEARCH_GENERATE_TIMEOUT_MS
     val aiSyncOnMiss: Boolean,                   // SMART_SEARCH_AI_SYNC_ON_MISS (false = async write-behind)
     val catalogWriteConfidenceThreshold: Float   // CATALOG_WRITE_CONFIDENCE_THRESHOLD
+)
+
+/**
+ * AI Progress Projections feature config. Controls the gpt-image-2 ladder generator and
+ * the Gemini gatekeeper that screens uploaded photos. All values hardcoded in
+ * [loadAiProgressProjectionConfig] — change there and redeploy. Sized for OpenAI Tier 1.
+ */
+data class AiProgressProjectionConfig(
+    val enabled: Boolean,
+    val openAiModel: String,
+    val quality: String,
+    val size: String,
+    val outputFormat: String,              // jpeg | png | webp
+    val outputCompression: Int,            // 0-100, applies to jpeg / webp
+    val promptVersion: Int,                // bump invalidates the cache
+    val numRungs: Int,                     // count of AI projection rungs (excludes the SOURCE rung)
+    val stepBodyFatPercent: Double,        // informational; actual step is computed from current → target / numRungs
+    val maxUploadBytes: Long,
+    val allowedMimeTypes: Set<String>,
+    val gatekeeperModel: String,
+    val gatekeeperTimeoutMs: Long,
+    val generateTimeoutMs: Long,
+    val maxParallelRungs: Int,             // Semaphore bound on parallel OpenAI calls
 )
 
 data class SupabaseConfig(
@@ -110,6 +134,32 @@ private fun loadSmartSearchConfig(): SmartSearchConfig {
     )
 }
 
+/**
+ * AI Progress Projections settings. Intentionally hardcoded (not env-driven) — these values
+ * apply uniformly across environments and only change with a code review + deploy. Tweak here
+ * and ship rather than juggling env vars in dev/prod configs.
+ *
+ * **Tier-1 note:** numRungs and maxParallelRungs are sized for OpenAI Tier 1 (5 IPM cap on
+ * gpt-image-2). Bump both to 5 once the org is on Tier 2+ — single line edit, deploy, done.
+ */
+private fun loadAiProgressProjectionConfig(): AiProgressProjectionConfig = AiProgressProjectionConfig(
+    enabled = true,
+    openAiModel = "gpt-image-2",
+    quality = "medium",
+    size = "1024x1536",
+    outputFormat = "jpeg",
+    outputCompression = 75,
+    promptVersion = 1,                                      // bump invalidates the cache
+    numRungs = 3,                                           // 5 once on Tier 2+
+    stepBodyFatPercent = 3.0,
+    maxUploadBytes = 8L * 1024 * 1024,                      // 8 MB
+    allowedMimeTypes = setOf("image/jpeg", "image/png"),
+    gatekeeperModel = "gemini-2.5-flash-lite",
+    gatekeeperTimeoutMs = 20_000L,                          // Flash Lite + image + JSON schema: typically 4–8s, but cold start can push past 10s
+    generateTimeoutMs = 120_000L,                           // OpenAI's published "up to 2 minutes" ceiling
+    maxParallelRungs = 3,                                   // 5 once on Tier 2+
+)
+
 private fun loadSupabaseServiceRoleKey(): String {
     return env("SUPABASE_SERVICE_ROLE_KEY")?.trim()?.ifBlank { null }
         ?: error("Missing SUPABASE_SERVICE_ROLE_KEY")
@@ -127,6 +177,7 @@ object ConfigLoader {
 
     private fun createDevelopmentConfig(): AppConfig {
         val smartSearch = loadSmartSearchConfig()
+        val aiProgressProjection = loadAiProgressProjectionConfig()
         return AppConfig(
             environment = AppEnvironment.DEVELOPMENT,
             apiKeys = ApiKeys(
@@ -145,11 +196,13 @@ object ConfigLoader {
                 jwtVerificationMode = SupabaseJwtVerificationMode.fromString(env("SUPABASE_JWT_VERIFICATION_MODE")),
             ),
             smartSearch = smartSearch,
+            aiProgressProjection = aiProgressProjection,
         )
     }
 
     private fun createProductionConfig(): AppConfig {
         val smartSearch = loadSmartSearchConfig()
+        val aiProgressProjection = loadAiProgressProjectionConfig()
         return AppConfig(
             environment = AppEnvironment.PRODUCTION,
             apiKeys = ApiKeys(
@@ -168,6 +221,7 @@ object ConfigLoader {
                 jwtVerificationMode = SupabaseJwtVerificationMode.fromString(env("SUPABASE_JWT_VERIFICATION_MODE")),
             ),
             smartSearch = smartSearch,
+            aiProgressProjection = aiProgressProjection,
         )
     }
 }

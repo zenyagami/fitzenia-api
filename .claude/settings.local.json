@@ -75,7 +75,14 @@
       "Bash(rtk ls *)",
       "Bash(./gradlew compileKotlin -q)",
       "Bash(xargs ls *)",
-      "mcp__supabase-development__get_logs"
+      "mcp__supabase-development__get_logs",
+      "WebFetch(domain:platform.openai.com)",
+      "WebFetch(domain:developers.openai.com)",
+      "WebSearch",
+      "WebFetch(domain:openai.com)",
+      "mcp__supabase-development__list_migrations",
+      "mcp__supabase-development__get_advisors",
+      "Bash(grep -E \"\\\\.\\(kt|yaml\\)$\")"
     ]
   },
   "enableAllProjectMcpServers": true,

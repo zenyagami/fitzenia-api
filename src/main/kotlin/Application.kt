@@ -8,17 +8,21 @@ import com.zenthek.model.ErrorResponse
 import com.zenthek.routes.RateLimitNames
 import com.zenthek.routes.configureRouting
 import com.zenthek.service.AccountService
+import com.zenthek.service.AiProgressProjectionService
 import com.zenthek.service.FoodService
 import com.zenthek.service.SmartSearchOrchestrator
 import com.zenthek.service.UnauthorizedException
 import com.zenthek.service.UpstreamFailureException
 import com.zenthek.service.UserProfileService
+import com.zenthek.upstream.supabase.AiProgressLadderGateway
 import com.zenthek.upstream.supabase.CanonicalCatalogClient
 import com.zenthek.upstream.supabase.CanonicalCatalogGateway
 import com.zenthek.upstream.supabase.SupabaseAdminGateway
 import com.zenthek.upstream.supabase.SupabaseClient
 import com.zenthek.upstream.openai.OpenAiApiService
+import com.zenthek.upstream.openai.OpenAiImageEditClient
 import com.zenthek.upstream.gemini.GeminiApiService
+import com.zenthek.upstream.gemini.GeminiProgressGatekeeperClient
 import com.zenthek.upstream.openfoodfacts.OpenFoodFactsClient
 import com.zenthek.upstream.usda.UsdaClient
 import io.ktor.client.*
@@ -117,6 +121,30 @@ fun Application.module() {
         backgroundScope = smartSearchBackgroundScope
     )
 
+    // AI Progress Projections — bytes-in ladder generator + delete endpoint.
+    val ladderGateway = AiProgressLadderGateway(
+        httpClient = httpClient,
+        supabaseConfig = config.supabase,
+        serviceRoleKey = config.apiKeys.supabaseServiceRoleKey,
+    )
+    val progressGatekeeper = GeminiProgressGatekeeperClient(
+        httpClient = httpClient,
+        apiKey = config.geminiApiKey,
+        config = config.aiProgressProjection,
+    )
+    val openAiImageEdit = OpenAiImageEditClient(
+        httpClient = httpClient,
+        apiKey = config.apiKeys.openAiApiKey,
+        config = config.aiProgressProjection,
+    )
+    val aiProgressProjectionService = AiProgressProjectionService(
+        ladderGateway = ladderGateway,
+        storageGateway = supabaseAdminGateway,
+        gatekeeper = progressGatekeeper,
+        openAiImageEdit = openAiImageEdit,
+        config = config.aiProgressProjection,
+    )
+
     warnIfRemoteMode(config.supabase)
     probeJwks(httpClient, config.supabase)
 
@@ -124,7 +152,7 @@ fun Application.module() {
     configureStatusPages()
     configureRateLimit()
     configureAuthentication(config.supabase, supabaseClient)
-    configureRouting(foodService, smartSearch, imageAnalyzer, userProfileService, accountService)
+    configureRouting(foodService, smartSearch, imageAnalyzer, userProfileService, accountService, aiProgressProjectionService)
 }
 
 fun Application.configureRateLimit() {
@@ -138,6 +166,10 @@ fun Application.configureRateLimit() {
             requestKey { call -> call.authenticatedUserIdOrFail() }
         }
         register(RateLimitName(RateLimitNames.ACCOUNT)) {
+            rateLimiter(limit = 3, refillPeriod = 1.minutes)
+            requestKey { call -> call.authenticatedUserIdOrFail() }
+        }
+        register(RateLimitName(RateLimitNames.PROGRESS_PROJECTION)) {
             rateLimiter(limit = 3, refillPeriod = 1.minutes)
             requestKey { call -> call.authenticatedUserIdOrFail() }
         }

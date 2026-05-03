@@ -47,6 +47,7 @@ src/main/kotlin/
     │   ├── SmartSearchOrchestrator.kt       # canonical-catalog-first search + AI rank/generate + write-behind
     │   ├── UserProfileService.kt            # /api/user/register + /registration-status
     │   ├── AccountService.kt                # /api/account DELETE — three-stage wipe orchestrator
+    │   ├── AiProgressProjectionService.kt   # /api/progress/ladders/* — ladder generator + delete
     │   ├── QueryNormalizer.kt               # locale-aware query canonicalization
     │   ├── NutritionValidator.kt            # sanity-checks AI nutrition payloads
     │   ├── UnauthorizedException.kt         # → HTTP 401
@@ -55,10 +56,13 @@ src/main/kotlin/
     │   ├── FoodItem.kt                      # FoodItem, FoodSource (incl. CANONICAL), Smart Search responses, image DTOs
     │   ├── ImageAnalyzer.kt                 # ImageAnalyzer fun interface + ImageAnalyzerFactory (system prompt + JSON schema)
     │   ├── CanonicalCatalogEntities.kt      # canonical_food / serving / term + insert_canonical_foods RPC payload
-    │   └── UserProfile.kt                   # UserProfileEntity, UserGoalEntity, CalorieTargetEntity, register DTOs, ErrorResponse
+    │   ├── UserProfile.kt                   # UserProfileEntity, UserGoalEntity, CalorieTargetEntity, register DTOs, ErrorResponse
+    │   ├── AiProgressLadderEntities.kt      # ladder + rung row/insert/dto types, BodyFatSource, ResolvedLadderInputs, SSE event DTOs
+    │   └── AiProgressPrompts.kt             # versioned prompt template for gpt-image-2 edits
     ├── ai/
     │   ├── AiSearchClient.kt                # interface: classify + generate
-    │   └── GeminiAiSearchClient.kt          # Gemini generateContent with strict JSON schema
+    │   ├── GeminiAiSearchClient.kt          # Gemini generateContent with strict JSON schema
+    │   └── ProgressGatekeeperClient.kt      # interface for the photo gatekeeper + GatekeeperVerdict DTO
     ├── network/HttpClientProvider.kt
     ├── upstream/
     │   ├── openfoodfacts/                   # v3 product + search-a-licious search + autocomplete (country-aware fan-out)
@@ -67,9 +71,14 @@ src/main/kotlin/
     │   ├── supabase/
     │   │   ├── SupabaseClient.kt            # SupabaseGateway: auth user lookup + user_profile/user_goal/calorie_target REST
     │   │   ├── CanonicalCatalogGateway.kt   # service-role canonical catalog reads + insert_canonical_foods RPC
-    │   │   └── SupabaseAdminGateway.kt      # service-role storage/postgres/auth admin (account delete)
-    │   ├── gemini/GeminiApiService.kt       # image analysis primary backend (context cache, Mutex-protected)
-    │   └── openai/OpenAiApiService.kt       # image analysis fallback (Responses API)
+    │   │   ├── SupabaseAdminGateway.kt      # service-role storage/postgres/auth admin (uploadObject, removeStorageObjects, etc.)
+    │   │   └── AiProgressLadderGateway.kt   # service-role reads/writes for ai_progress_ladder + rung tables (cache lookup, INSERT-on-conflict, ownership-checked delete)
+    │   ├── gemini/
+    │   │   ├── GeminiApiService.kt           # image analysis primary backend (context cache, Mutex-protected)
+    │   │   └── GeminiProgressGatekeeperClient.kt  # gatekeeper for AI progress projections (gate verdict + body-fat estimate in one call)
+    │   └── openai/
+    │       ├── OpenAiApiService.kt           # image analysis fallback (Responses API)
+    │       └── OpenAiImageEditClient.kt      # gpt-image-2 /v1/images/edits (multipart, b64_json), used by progress projections
     └── mapper/
         ├── OpenFoodFactsMapper.kt           # map() barcode + mapV3Search() with ResultKind
         ├── UsdaMapper.kt                    # mapSearchItem* with GENERIC/BRANDED kind
@@ -103,6 +112,8 @@ deploy.sh, deploy-dev.sh, grant-secrets.sh, sync-secrets.sh, check-cloud-run-env
 | POST | `/api/user/register` | JWT | — | Idempotent insert of `user_profile`/`user_goal`/`calorie_target` |
 | GET | `/api/user/registration-status` | JWT | — | Returns `{isSignedIn, isRegistered}` |
 | DELETE | `/api/account` | JWT | `account` | Three-stage hard wipe (storage → postgres → auth) |
+| POST | `/api/progress/ladders/generate-stream` | JWT | `progress-projection` | Multipart bytes in (image + body comp). SSE: `status` → `rung` (source) → `rung` × N (projections) → `done` (or `error`) |
+| DELETE | `/api/progress/ladders/{id}` | JWT | `progress-projection` | Sync row + blob cleanup (storage delete then DB delete). 204 / 404 |
 
 ---
 
@@ -140,13 +151,14 @@ The raw bearer token is stashed under `SupabaseAccessTokenKey` so handlers can f
 
 ## Rate limiting
 
-`Application.configureRateLimit()` registers three buckets, all keyed on the authenticated user's `userId`. A request reaching the rate limiter without a principal throws `UnauthorizedException` (defense-in-depth — the auth wrapper should already have rejected it).
+`Application.configureRateLimit()` registers four buckets, all keyed on the authenticated user's `userId`. A request reaching the rate limiter without a principal throws `UnauthorizedException` (defense-in-depth — the auth wrapper should already have rejected it).
 
 | Bucket | Constant | Limit |
 |---|---|---|
 | Food search / autocomplete / barcode / smart search stream | `RateLimitNames.FOOD_SEARCH` (`"food-search"`) | 200 req/min/user |
 | Image analysis (sync + SSE) | `RateLimitNames.IMAGE_ANALYSIS` (`"image-analysis"`) | 20 req/min/user |
 | Account deletion | `RateLimitNames.ACCOUNT` (`"account"`) | 3 req/min/user |
+| AI progress projections (generate + delete) | `RateLimitNames.PROGRESS_PROJECTION` (`"progress-projection"`) | 3 req/min/user |
 
 Adding a route to an existing bucket: drop it into the matching `rateLimit(...) { ... }` block in `routes/Routing.kt`. New bucket → register in both `configureRateLimit` and `RateLimitNames`.
 
@@ -208,12 +220,36 @@ Both image endpoints accept `AnalyzeImageRequest(image: base64, mealTitle?, addi
 
 ---
 
+## AI Progress Projections (the "ladder")
+
+`POST /api/progress/ladders/generate-stream` takes a multipart body (`image` bytes + optional `currentWeightKg` / `currentBodyFatPercent` / `targetWeightKg` / `targetBodyFatPercent`) and returns an SSE stream emitting `status` → `rung` (source, step_index=0) → `rung` × N (projections) → `done` (or `error`).
+
+Decoupled from `progress_photo` and the `progress-photos` bucket — the client picks any photo (gallery / camera / library) and ships the bytes. The orchestrator (`AiProgressProjectionService`) hashes the bytes for the cache key, runs a single Gemini Flash Lite gatekeeper call (gate verdict + body-fat estimate), persists the source as **rung #0** with `kind='SOURCE'` in the `ai-progress-ladders` bucket at `{userId}/ladders/{ladderId}/0.jpg`, then fans out N parallel `gpt-image-2 /v1/images/edits` calls bounded by a `Semaphore`. Each rung row inserts into `ai_progress_ladder_rung` (in `supabase_realtime` publication) so a dropped SSE connection doesn't lose progress — clients subscribe to realtime as a backup truth source.
+
+**Body comp resolution chain** (run before the cache key is computed, persisted on the ladder row):
+- `currentWeightKg`: request → `weight_entry.weight_kg` (latest) → `400 missing_current_weight`
+- `currentBodyFatPercent`: request → gatekeeper photo-AI estimate → `400 missing_current_body_fat` (no `weight_entry` or formula fallback)
+- `targetWeightKg`: request → `user_goal.goal_weight_kg` → `400 missing_target_weight`
+- `targetBodyFatPercent`: request → `user_goal.body_fat_percent` → `400 missing_target_body_fat`
+
+Photo-AI estimate is **not** persisted to `weight_entry` — it lives only on the ladder row + the SSE `status.resolved` payload.
+
+**Cache hits** are zero-cost: same `(user_id, sha256(bytes), resolved targets, prompt_version, model)` returns the cached rungs immediately. Same photo + tweaked targets → fresh ladder. The unique index on `(user_id, request_key)` handles cross-instance dedup; per-instance, an `INSERT ... ON CONFLICT DO NOTHING` handles concurrent calls.
+
+**`DELETE /api/progress/ladders/{id}`** is the only delete path. Postgres can't call out to Supabase Storage, so the client cannot delete via Supabase REST directly (RLS has no client DELETE policy on the ladder table). The endpoint reads rung `storage_path`s, batch-deletes blobs via service-role (404 = success), then deletes the ladder row (cascade FK wipes the rung rows).
+
+**Tier-1 sizing.** All feature config is hardcoded in `loadAiProgressProjectionConfig()` — no env vars, no Cloud Run config changes. `numRungs` and `maxParallelRungs` default to 3 to fit in the OpenAI Tier 1 5-IPM cap on `gpt-image-2`. Bump both to 5 once on Tier 2+ (single-line edit + redeploy).
+
+`gpt-image-2` requires a verified OpenAI organization. Tier-1 alone isn't enough — verify org status before the first test call.
+
+---
+
 ## Account deletion
 
 `DELETE /api/account` (`account` bucket, 3 req/min/user) hard-wipes the caller. Implemented by `AccountService` over `SupabaseAdminGateway` (service-role). **Idempotent** — safe to retry on partial failure. Order is intentional:
 
-1. **Storage** — recursive wipe of `progress-photos/<userId>/`. List/delete in 1000-row batches until empty. 404 = empty bucket prefix, success.
-2. **Postgres** — single transactional `public.delete_user_data(p_user_id)` RPC (see `docs/migrations/20260423000000_add_delete_user_data_function.sql`).
+1. **Storage** — recursive wipe of `progress-photos/<userId>/` AND `ai-progress-ladders/<userId>/`. List/delete in 1000-row batches until empty. 404 = empty bucket prefix, success.
+2. **Postgres** — single transactional `public.delete_user_data(p_user_id)` RPC (see `docs/migrations/20260423000000_add_delete_user_data_function.sql`). Wipes `ai_progress_ladder_rung` and `ai_progress_ladder` in dependency order alongside the existing rows.
 3. **Auth** — `DELETE /auth/v1/admin/users/{id}`. 404 = already deleted, success.
 
 Auth is last so a Postgres failure leaves the user still authenticated and able to retry. Each stage logs `[ACCOUNT-ADMIN] stage=...`. Any non-tolerated exception in a stage becomes `UpstreamFailureException` → HTTP 502 with stage name preserved server-side.
@@ -248,10 +284,13 @@ data class AppConfig(
     val geminiApiKey: String,
     val supabase: SupabaseConfig,            // url, publishableKey?, legacyAnonKey?, jwtVerificationMode
     val smartSearch: SmartSearchConfig,
+    val aiProgressProjection: AiProgressProjectionConfig,  // hardcoded; see loadAiProgressProjectionConfig()
 )
 ```
 
 `ConfigLoader.loadConfig()` runs once at startup. Missing required vars throw with a clear message — no silent null. Branches on `APP_ENVIRONMENT` (development reads `SUPABASE_DEV_ANON_KEY`; production reads `SUPABASE_ANON_KEY`).
+
+**`AiProgressProjectionConfig` is hardcoded** in `loadAiProgressProjectionConfig()` — model name, quality, size, num rungs, mime allowlist, timeouts, etc. all live in code, not env. They apply uniformly across dev and prod and only change with a code review + deploy. The two secrets the feature uses (`OPENAI_API_KEY`, `GEMINI_API_KEY`) come from the existing env-driven config.
 
 ### Environment variables
 
@@ -370,7 +409,9 @@ See `DEPLOY.md` for the full deployment guide. Cloud Run configs: `cloud-run-con
 - **OFF search**: `https://search.openfoodfacts.org/search` (search-a-licious) — response has `hits` (not `products`); `brands` is `List<String>` (not comma-separated); 1-indexed pages. The client fans out two parallel calls when `country` resolves to a `countries_tags` slug (filtered + unfiltered) and merges, dedup-by-code, filtered-first.
 - **USDA search**: GET (not POST) with `pageNumber` 1-indexed. `dataType=Branded,Foundation,SR Legacy`. `ResultKind` is set from `dataType`.
 - **FatSecret is unwired** — client/token-manager/mapper kept for reference only. The `Mutex` token-refresh contract still applies if it's ever re-enabled. Its env vars are still validated at startup.
-- **Service-role gateways** (`CanonicalCatalogClient`, `SupabaseAdminGateway`) bypass RLS — never use them on a user-scoped path. They are only invoked from `SmartSearchOrchestrator` and `AccountService`.
+- **Service-role gateways** (`CanonicalCatalogClient`, `SupabaseAdminGateway`, `AiProgressLadderGateway`) bypass RLS — never use them on a user-scoped path. They are only invoked from `SmartSearchOrchestrator`, `AccountService`, and `AiProgressProjectionService`.
+- **`gpt-image-2` requires a verified OpenAI org + Tier 2+ for full parallelism.** On Tier 1 (5 IPM cap), the feature ships with `numRungs=3` so a single ladder fits the cap with headroom. Bump to 5 once on Tier 2.
+- **`ai_progress_ladder` and `ai_progress_ladder_rung` have no client DELETE policy** — the client must call `DELETE /api/progress/ladders/{id}` so storage blob cleanup is guaranteed. A direct `supabase.from(...).delete()` will fail under RLS.
 - **Stale-after-delete tokens**: a 409 with Postgres `23503` against `*_user_id_fkey` on insert is mapped to `UnauthorizedException` (401), not 500.
 - **One Ktor client** is shared across all upstream services (`HttpTimeout: requestTimeoutMillis = 10_000, connectTimeoutMillis = 5_000`). Don't spin up extras per-service.
 - **Stateless** — only in-memory caches are the Gemini context cache ID and (legacy) FatSecret token, both Mutex-protected and rebuilt on cold start.

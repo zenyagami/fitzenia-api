@@ -112,7 +112,12 @@ class SupabaseAdminGateway(
         throw UpstreamFailureException("Account deletion failed at storage-list-parse")
     }
 
-    private suspend fun removeStorageObjects(bucket: String, fullPaths: List<String>) {
+    /**
+     * Multi-delete: removes the exact paths supplied (no prefix expansion). 404 from
+     * Supabase is logged but not raised — already-gone is fine for an idempotent retry.
+     */
+    suspend fun removeStorageObjects(bucket: String, fullPaths: List<String>) {
+        if (fullPaths.isEmpty()) return
         // Supabase multi-delete: DELETE /storage/v1/object/{bucket} with body { "prefixes": [...] }
         // (matches what supabase-js `.remove()` sends; there is no `/remove` sub-path).
         val response = runStage(stage = "storage-remove") {
@@ -122,8 +127,36 @@ class SupabaseAdminGateway(
                 setBody(StorageRemoveRequest(prefixes = fullPaths))
             }
         }
+        if (response.status == HttpStatusCode.NotFound) {
+            log.info("[STORAGE-ADMIN] storage remove 404 bucket={} paths={} (treating as success)", bucket, fullPaths.size)
+            return
+        }
         if (!response.status.isSuccess()) {
             fail(stage = "storage-remove", response)
+        }
+    }
+
+    /**
+     * Service-role upload to Supabase Storage. POSTs raw bytes with `x-upsert: true` so
+     * a retry after a partial-success write replaces cleanly instead of 409-ing on the
+     * already-existing path.
+     */
+    suspend fun uploadObject(
+        bucket: String,
+        path: String,
+        bytes: ByteArray,
+        contentType: ContentType,
+    ) {
+        val response = runStage(stage = "storage-upload") {
+            httpClient.post("$baseUrl/storage/v1/object/$bucket/$path") {
+                applyServiceRoleAuth()
+                header("x-upsert", "true")
+                contentType(contentType)
+                setBody(bytes)
+            }
+        }
+        if (!response.status.isSuccess()) {
+            fail(stage = "storage-upload", response)
         }
     }
 
