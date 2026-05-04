@@ -19,9 +19,11 @@ import com.zenthek.upstream.supabase.CanonicalCatalogClient
 import com.zenthek.upstream.supabase.CanonicalCatalogGateway
 import com.zenthek.upstream.supabase.SupabaseAdminGateway
 import com.zenthek.upstream.supabase.SupabaseClient
+import com.zenthek.upstream.imageedit.ProgressImageEditClient
 import com.zenthek.upstream.openai.OpenAiApiService
 import com.zenthek.upstream.openai.OpenAiImageEditClient
 import com.zenthek.upstream.gemini.GeminiApiService
+import com.zenthek.upstream.gemini.GeminiImageEditClient
 import com.zenthek.upstream.gemini.GeminiProgressGatekeeperClient
 import com.zenthek.upstream.openfoodfacts.OpenFoodFactsClient
 import com.zenthek.upstream.usda.UsdaClient
@@ -34,6 +36,7 @@ import io.ktor.serialization.kotlinx.json.*
 import io.ktor.server.application.*
 import io.ktor.server.auth.principal
 import com.zenthek.config.ConfigLoader
+import com.zenthek.config.ImageGenerationProvider
 import com.zenthek.config.SupabaseConfig
 import com.zenthek.config.SupabaseJwtVerificationMode
 import io.ktor.http.HttpStatusCode
@@ -132,16 +135,28 @@ fun Application.module() {
         apiKey = config.geminiApiKey,
         config = config.aiProgressProjection,
     )
-    val openAiImageEdit = OpenAiImageEditClient(
-        httpClient = httpClient,
-        apiKey = config.apiKeys.openAiApiKey,
-        config = config.aiProgressProjection,
+    val imageEditClient: ProgressImageEditClient = when (config.aiProgressProjection.provider) {
+        ImageGenerationProvider.OPENAI -> OpenAiImageEditClient(
+            httpClient = httpClient,
+            apiKey = config.apiKeys.openAiApiKey,
+            config = config.aiProgressProjection,
+        )
+        ImageGenerationProvider.GEMINI -> GeminiImageEditClient(
+            httpClient = httpClient,
+            apiKey = config.geminiApiKey,
+            config = config.aiProgressProjection,
+        )
+    }
+    log.info(
+        "AI Progress Projections: provider={} model={}",
+        config.aiProgressProjection.provider,
+        config.aiProgressProjection.activeImageModel,
     )
     val aiProgressProjectionService = AiProgressProjectionService(
         ladderGateway = ladderGateway,
         storageGateway = supabaseAdminGateway,
         gatekeeper = progressGatekeeper,
-        openAiImageEdit = openAiImageEdit,
+        imageEdit = imageEditClient,
         config = config.aiProgressProjection,
     )
 

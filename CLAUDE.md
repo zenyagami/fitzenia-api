@@ -240,6 +240,8 @@ Photo-AI estimate is **not** persisted to `weight_entry` — it lives only on th
 
 **Tier-1 sizing.** All feature config is hardcoded in `loadAiProgressProjectionConfig()` — no env vars, no Cloud Run config changes. `numRungs` and `maxParallelRungs` default to 3 to fit in the OpenAI Tier 1 5-IPM cap on `gpt-image-2`. Bump both to 5 once on Tier 2+ (single-line edit + redeploy).
 
+**Image-edit provider switch.** `provider = ImageGenerationProvider.OPENAI | GEMINI` in `loadAiProgressProjectionConfig()` picks the upstream — OpenAI `gpt-image-2` (`OpenAiImageEditClient`) or Gemini nano banana (`GeminiImageEditClient`, `gemini-2.5-flash-image`). Service depends on the `ProgressImageEditClient` interface. Cache key includes `activeImageModel`, so flipping the provider produces a fresh ladder. Cost computation is gpt-image-2-only today — Gemini ladders write `null` cost.
+
 `gpt-image-2` requires a verified OpenAI organization. Tier-1 alone isn't enough — verify org status before the first test call.
 
 ---

@@ -3,6 +3,7 @@ package com.zenthek.service
 import com.zenthek.ai.GatekeeperVerdict
 import com.zenthek.ai.ProgressGatekeeperClient
 import com.zenthek.config.AiProgressProjectionConfig
+import com.zenthek.config.ImageGenerationProvider
 import com.zenthek.model.AiProgressLadderInsertPayload
 import com.zenthek.model.AiProgressLadderRow
 import com.zenthek.model.AiProgressLadderRungInsertPayload
@@ -20,8 +21,8 @@ import com.zenthek.model.ResolvedLadderInputs
 import com.zenthek.model.RungKind
 import com.zenthek.model.RungStatus
 import com.zenthek.model.toDto
-import com.zenthek.upstream.openai.OpenAiContentPolicyException
-import com.zenthek.upstream.openai.OpenAiImageEditClient
+import com.zenthek.upstream.imageedit.ImageEditModerationException
+import com.zenthek.upstream.imageedit.ProgressImageEditClient
 import com.zenthek.upstream.supabase.AiProgressLadderGateway
 import com.zenthek.upstream.supabase.SupabaseAdminGateway
 import io.ktor.http.ContentType
@@ -73,7 +74,7 @@ class AiProgressProjectionService(
     private val ladderGateway: AiProgressLadderGateway,
     private val storageGateway: SupabaseAdminGateway,
     private val gatekeeper: ProgressGatekeeperClient,
-    private val openAiImageEdit: OpenAiImageEditClient,
+    private val imageEdit: ProgressImageEditClient,
     private val config: AiProgressProjectionConfig,
 ) {
     private val log = LoggerFactory.getLogger(AiProgressProjectionService::class.java)
@@ -211,7 +212,7 @@ class AiProgressProjectionService(
             bodyFatSource = baseBodyFatSource.wireValue,
             stepBodyFatPercent = kotlin.math.abs(stepBfDelta),
             numSteps = numRungs,
-            model = config.openAiModel,
+            model = config.activeImageModel,
             quality = config.quality,
             size = config.size,
             promptVersion = config.promptVersion,
@@ -443,21 +444,21 @@ class AiProgressProjectionService(
         )
         val sourceFilename = if (mimeType.contains("png", ignoreCase = true)) "source.png" else "source.jpg"
 
-        val editResult: OpenAiImageEditClient.Result = try {
-            openAiImageEdit.edit(
+        val editResult: ProgressImageEditClient.Result = try {
+            imageEdit.edit(
                 sourceBytes = sourceBytes,
                 sourceMimeType = mimeType,
                 sourceFilename = sourceFilename,
                 prompt = prompt,
                 userId = userId,
             )
-        } catch (e: OpenAiContentPolicyException) {
-            log.warn("[PROJECTION] rung blocked by OpenAI safety system ladderId={} step={} msg={}", ladderId, stepIndex, e.message)
+        } catch (e: ImageEditModerationException) {
+            log.warn("[PROJECTION] rung blocked by upstream safety system ladderId={} step={} msg={}", ladderId, stepIndex, e.message)
             persistFailedRung(userId, ladderId, stepIndex, projectedBf, projectedWeight, "moderation_block", emitter)
             return RungAttemptOutcome.FAILED_MODERATION
         } catch (e: Exception) {
             log.warn("[PROJECTION] rung edit failed ladderId={} step={}", ladderId, stepIndex, e)
-            persistFailedRung(userId, ladderId, stepIndex, projectedBf, projectedWeight, "openai_edit_failed", emitter)
+            persistFailedRung(userId, ladderId, stepIndex, projectedBf, projectedWeight, "image_edit_failed", emitter)
             return RungAttemptOutcome.FAILED
         }
 
@@ -485,7 +486,7 @@ class AiProgressProjectionService(
                 projectedBodyFatPercent = projectedBf,
                 projectedWeightKg = projectedWeight,
                 storagePath = storagePath,
-                openAiModel = config.openAiModel,
+                openAiModel = config.activeImageModel,
                 usageInputTokens = editResult.usageInputTokens,
                 usageOutputTokens = editResult.usageOutputTokens,
                 usageCachedInputTokens = editResult.usageCachedInputTokens,
@@ -517,7 +518,7 @@ class AiProgressProjectionService(
                     projectedBodyFatPercent = projectedBf,
                     projectedWeightKg = projectedWeight,
                     storagePath = null,
-                    openAiModel = config.openAiModel,
+                    openAiModel = config.activeImageModel,
                     usageInputTokens = null,
                     usageOutputTokens = null,
                     usageCachedInputTokens = null,
@@ -629,7 +630,7 @@ class AiProgressProjectionService(
         val parts = listOf(
             userId,
             sourceContentHash,
-            config.openAiModel,
+            config.activeImageModel,
             config.quality,
             config.size,
             config.promptVersion.toString(),
@@ -643,13 +644,23 @@ class AiProgressProjectionService(
     }
 
     /**
-     * Estimate cost in micro-dollars from token counts. gpt-image-2 standard pricing:
+     * Estimate cost in micro-dollars from token counts. Provider-specific because pricing
+     * differs significantly. Returns null when usage isn't reported, OR for providers we
+     * haven't priced yet (so we don't write a bogus 0 to the cost column).
+     */
+    private fun computeCostMicros(result: ProgressImageEditClient.Result): Long? = when (config.provider) {
+        ImageGenerationProvider.OPENAI -> computeOpenAiCostMicros(result)
+        // Gemini pricing TBD — leave null until we decide whether we're shipping it.
+        ImageGenerationProvider.GEMINI -> null
+    }
+
+    /**
+     * gpt-image-2 standard pricing:
      *   image input  $8/M     ⇒ 8 micros per token
      *   cached input $2/M     ⇒ 2 micros per token
      *   image output $30/M    ⇒ 30 micros per token
-     * Returns null if usage isn't reported (so we don't write a bogus 0).
      */
-    private fun computeCostMicros(result: OpenAiImageEditClient.Result): Long? {
+    private fun computeOpenAiCostMicros(result: ProgressImageEditClient.Result): Long? {
         val input = result.usageInputTokens ?: return null
         val output = result.usageOutputTokens ?: return null
         val cached = result.usageCachedInputTokens ?: 0

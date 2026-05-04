@@ -2,6 +2,8 @@ package com.zenthek.upstream.openai
 
 import com.zenthek.config.AiProgressProjectionConfig
 import com.zenthek.service.UpstreamFailureException
+import com.zenthek.upstream.imageedit.ImageEditModerationException
+import com.zenthek.upstream.imageedit.ProgressImageEditClient
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.timeout
 import io.ktor.client.request.forms.MultiPartFormDataContent
@@ -34,16 +36,9 @@ class OpenAiImageEditClient(
     private val httpClient: HttpClient,
     private val apiKey: String,
     private val config: AiProgressProjectionConfig,
-) {
+) : ProgressImageEditClient {
     private val log = LoggerFactory.getLogger(OpenAiImageEditClient::class.java)
     private val json = Json { ignoreUnknownKeys = true }
-
-    data class Result(
-        val bytes: ByteArray,
-        val usageInputTokens: Int?,
-        val usageOutputTokens: Int?,
-        val usageCachedInputTokens: Int?,
-    )
 
     /**
      * @param sourceBytes the source photo bytes (the same bytes for every rung in a ladder
@@ -51,14 +46,14 @@ class OpenAiImageEditClient(
      * @param prompt the rung-specific prompt; identifies the projection step's target stats.
      * @param userId opaque per-user identifier passed to OpenAI for abuse monitoring.
      */
-    suspend fun edit(
+    override suspend fun edit(
         sourceBytes: ByteArray,
         sourceMimeType: String,
         sourceFilename: String,
         prompt: String,
         userId: String,
-    ): Result {
-        log.info("[IMAGE-EDIT] model={} bytes={} promptLen={}", config.openAiModel, sourceBytes.size, prompt.length)
+    ): ProgressImageEditClient.Result {
+        log.info("[IMAGE-EDIT] model={} bytes={} promptLen={}", config.openAiImageModel, sourceBytes.size, prompt.length)
 
         val response = httpClient.post("https://api.openai.com/v1/images/edits") {
             headers {
@@ -68,7 +63,7 @@ class OpenAiImageEditClient(
             setBody(
                 MultiPartFormDataContent(
                     formData {
-                        append("model", config.openAiModel)
+                        append("model", config.openAiImageModel)
                         append("prompt", prompt)
                         append("size", config.size)
                         append("quality", config.quality)
@@ -97,7 +92,7 @@ class OpenAiImageEditClient(
             // orchestrator can surface a tailored message ("photo flagged by safety system,
             // try one with athletic wear") instead of a generic "Generation failed".
             if (isContentPolicyBlock(body)) {
-                throw OpenAiContentPolicyException(extractErrorMessage(body) ?: "Photo rejected by OpenAI safety system")
+                throw ImageEditModerationException(extractErrorMessage(body) ?: "Photo rejected by OpenAI safety system")
             }
             throw UpstreamFailureException("OpenAI images.edits returned ${response.status.value}")
         }
@@ -119,7 +114,7 @@ class OpenAiImageEditClient(
         val outputTokens = usage?.get("output_tokens")?.jsonPrimitive?.intOrNull
         val cachedInputTokens = usage?.get("input_tokens_details")?.jsonObject?.get("cached_tokens")?.jsonPrimitive?.intOrNull
 
-        return Result(
+        return ProgressImageEditClient.Result(
             bytes = decoded,
             usageInputTokens = inputTokens,
             usageOutputTokens = outputTokens,
@@ -143,8 +138,3 @@ class OpenAiImageEditClient(
         return parsed["error"]?.jsonObject?.get("message")?.jsonPrimitive?.content
     }
 }
-
-/** Thrown when OpenAI's safety classifier rejects the request (e.g. minimal-clothing
- *  body shots flagged as `sexual`). Distinct from generic upstream failures so callers
- *  can surface a tailored, actionable error to the user. */
-class OpenAiContentPolicyException(message: String) : RuntimeException(message)

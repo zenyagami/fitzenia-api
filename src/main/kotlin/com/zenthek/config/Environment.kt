@@ -35,13 +35,16 @@ data class SmartSearchConfig(
 )
 
 /**
- * AI Progress Projections feature config. Controls the gpt-image-2 ladder generator and
- * the Gemini gatekeeper that screens uploaded photos. All values hardcoded in
- * [loadAiProgressProjectionConfig] — change there and redeploy. Sized for OpenAI Tier 1.
+ * AI Progress Projections feature config. Controls the image-edit ladder generator (OpenAI
+ * gpt-image-2 OR Gemini nano banana, picked via [provider]) and the Gemini gatekeeper that
+ * screens uploaded photos. All values hardcoded in [loadAiProgressProjectionConfig] — change
+ * there and redeploy. Sized for OpenAI Tier 1.
  */
 data class AiProgressProjectionConfig(
     val enabled: Boolean,
-    val openAiModel: String,
+    val provider: ImageGenerationProvider, // selects which image-edit upstream wires in
+    val openAiImageModel: String,          // model name when provider=OPENAI
+    val geminiImageModel: String,          // model name when provider=GEMINI
     val quality: String,
     val size: String,
     val outputFormat: String,              // jpeg | png | webp
@@ -54,8 +57,18 @@ data class AiProgressProjectionConfig(
     val gatekeeperModel: String,
     val gatekeeperTimeoutMs: Long,
     val generateTimeoutMs: Long,
-    val maxParallelRungs: Int,             // Semaphore bound on parallel OpenAI calls
-)
+    val maxParallelRungs: Int,             // Semaphore bound on parallel image-edit calls
+) {
+    /** Model name for the active provider. Stamped into the cache key, the ladder/rung DB
+     *  rows, and logs so flipping [provider] yields a fresh ladder (cache miss). */
+    val activeImageModel: String
+        get() = when (provider) {
+            ImageGenerationProvider.OPENAI -> openAiImageModel
+            ImageGenerationProvider.GEMINI -> geminiImageModel
+        }
+}
+
+enum class ImageGenerationProvider { OPENAI, GEMINI }
 
 data class SupabaseConfig(
     val url: String,
@@ -144,7 +157,9 @@ private fun loadSmartSearchConfig(): SmartSearchConfig {
  */
 private fun loadAiProgressProjectionConfig(): AiProgressProjectionConfig = AiProgressProjectionConfig(
     enabled = true,
-    openAiModel = "gpt-image-2",
+    provider = ImageGenerationProvider.GEMINI,           // flip to GEMINI to A/B-test nano banana
+    openAiImageModel = "gpt-image-2",
+    geminiImageModel = "gemini-3.1-flash-image-preview",         // nano banana
     quality = "medium",
     size = "1024x1536",
     outputFormat = "jpeg",

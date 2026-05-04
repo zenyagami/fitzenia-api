@@ -48,11 +48,13 @@ CHANGE ONLY:
   at ${"%.1f".format(i.currentWeightKg)} kg. Render them at approximately ${"%.1f".format(i.targetBodyFatPercent)}% body fat at
   ${"%.1f".format(i.targetWeightKg)} kg. Adjust visible muscle definition, waist, abdomen, arms, and overall
   body shape proportionally.
+- Add a slight and realistic increase in muscle fullness and definition, consistent with a natural body recomposition during a calorie deficit.
 
 CONSTRAINTS:
 - Do not add or remove text, watermarks, or logos.
 - Do not stylize. Photographic realism only.
-- No exaggeration. The result must remain plausible for a real human at the stated body fat percentage.
+- No exaggeration. The result must remain plausible for a real human but also optimistic for a person that lift weights at least 3 times per week
 - Do not alter the person's apparent age.
+- Keep any added muscle subtle, natural, and proportional to the person's frame and target body fat percentage.
 """.trimIndent()
 }

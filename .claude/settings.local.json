@@ -83,7 +83,9 @@
       "mcp__supabase-development__list_migrations",
       "mcp__supabase-development__get_advisors",
       "Bash(grep -E \"\\\\.\\(kt|yaml\\)$\")",
-      "mcp__supabase-production__get_advisors"
+      "mcp__supabase-production__get_advisors",
+      "Bash(rtk proxy *)",
+      "Bash(./gradlew compileKotlin compileTestKotlin --console=plain)"
     ]
   },
   "enableAllProjectMcpServers": true,
