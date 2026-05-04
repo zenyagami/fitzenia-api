@@ -7,6 +7,7 @@ import com.zenthek.model.AiProgressLadderRungInsertPayload
 import com.zenthek.model.AiProgressLadderRungRow
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
+import io.ktor.client.statement.bodyAsText
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.delete
 import io.ktor.client.request.get
@@ -86,7 +87,8 @@ class AiProgressLadderGateway(
             setBody(payload)
         }
         if (!response.status.isSuccess()) {
-            log.warn("[LADDER] insertLadderIfAbsent status={} userId={} key={}", response.status.value, payload.userId, payload.requestKey)
+            val body = runCatching { response.bodyAsText() }.getOrDefault("<unreadable>")
+            log.warn("[LADDER] insertLadderIfAbsent status={} userId={} key={} body={}", response.status.value, payload.userId, payload.requestKey, body)
             throw IllegalStateException("ai_progress_ladder insert failed with ${response.status.value}")
         }
         // PostgREST returns an array; empty when the conflict was hit and DO NOTHING ran.
@@ -115,7 +117,8 @@ class AiProgressLadderGateway(
             setBody(patch)
         }
         if (!response.status.isSuccess()) {
-            log.warn("[LADDER] updateLadder status={} ladderId={}", response.status.value, ladderId)
+            val body = runCatching { response.bodyAsText() }.getOrDefault("<unreadable>")
+            log.warn("[LADDER] updateLadder status={} ladderId={} body={}", response.status.value, ladderId, body)
             throw IllegalStateException("ai_progress_ladder patch failed with ${response.status.value}")
         }
     }
@@ -128,7 +131,8 @@ class AiProgressLadderGateway(
             setBody(payload)
         }
         if (!response.status.isSuccess()) {
-            log.warn("[LADDER] insertRung status={} ladderId={} step={}", response.status.value, payload.ladderId, payload.stepIndex)
+            val body = runCatching { response.bodyAsText() }.getOrDefault("<unreadable>")
+            log.warn("[LADDER] insertRung status={} ladderId={} step={} body={}", response.status.value, payload.ladderId, payload.stepIndex, body)
             throw IllegalStateException("ai_progress_ladder_rung insert failed with ${response.status.value}")
         }
         val rows = response.body<List<AiProgressLadderRungRow>>()

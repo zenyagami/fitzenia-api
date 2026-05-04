@@ -52,8 +52,12 @@ create table if not exists public.ai_progress_ladder (
 );
 
 -- Cross-instance dedup of in-flight generations.
-create unique index if not exists ai_progress_ladder_user_request_key_uidx
-    on public.ai_progress_ladder (user_id, request_key);
+-- Must be a UNIQUE CONSTRAINT (not just a unique index) so PostgREST can resolve the
+-- on_conflict=user_id,request_key parameter via pg_constraint. A bare CREATE UNIQUE INDEX
+-- is invisible to PostgREST and causes a 400 on every INSERT attempt.
+alter table public.ai_progress_ladder
+    add constraint ai_progress_ladder_user_request_key_key
+    unique (user_id, request_key);
 
 -- Cache-hit lookup path: same user uploads same photo repeatedly.
 create index if not exists ai_progress_ladder_source_content_hash_idx
