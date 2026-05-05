@@ -10,32 +10,46 @@ class FoodService(
     private val offClient: OpenFoodFactsClient,
     private val usdaClient: UsdaClient
 ) {
-    suspend fun getByBarcode(barcode: String): FoodItem? {
+    suspend fun getByBarcode(
+        barcode: String,
+        country: String? = null,
+        ipCountry: String? = null,
+    ): FoodItem? {
+        val usPreferred = isUsPreferred(country, ipCountry)
         var lastException: Exception? = null
 
-        // 1. Try Open Food Facts
-        try {
-            val offResult = offClient.getByBarcode(barcode)
-            if (offResult != null) return offResult
+        suspend fun tryOff(): FoodItem? = try {
+            offClient.getByBarcode(barcode)
         } catch (e: Exception) {
             lastException = e
+            null
         }
 
-        // 2. Try USDA
-        try {
-            val usdaResult = usdaClient.getByBarcode(barcode)
-            if (usdaResult != null) return usdaResult
+        suspend fun tryUsda(): FoodItem? = try {
+            usdaClient.getByBarcode(barcode)
         } catch (e: Exception) {
             lastException = e
+            null
         }
 
-        // If all threw exceptions
+        val result = if (usPreferred) {
+            tryUsda() ?: tryOff()
+        } else {
+            tryOff() ?: tryUsda()
+        }
+        if (result != null) return result
+
         if (lastException != null) {
             throw UpstreamFailureException("All upstream APIs failed during barcode lookup: ${lastException.message}")
         }
-
-        // All returned null successfully
         return null
+    }
+
+    private fun isUsPreferred(country: String?, ipCountry: String?): Boolean {
+        val resolved = sequenceOf(country, ipCountry)
+            .mapNotNull { it?.trim()?.takeIf(String::isNotBlank)?.uppercase() }
+            .firstOrNull { it.length == 2 && it.all(Char::isLetter) && it !in CDN_UNKNOWN_SENTINELS }
+        return resolved == "US"
     }
 
     suspend fun autocomplete(query: String, limit: Int): List<String> = coroutineScope {
@@ -50,4 +64,8 @@ class FoodService(
     // SmartSearchOrchestrator replaces them. Barcode + autocomplete paths are
     // unchanged; FatSecret is still used for autocomplete (so its client stays
     // wired) but its search endpoint is no longer invoked anywhere.
+
+    private companion object {
+        private val CDN_UNKNOWN_SENTINELS = setOf("XX", "T1", "ZZ")
+    }
 }

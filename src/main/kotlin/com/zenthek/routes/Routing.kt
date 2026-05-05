@@ -189,8 +189,14 @@ fun Route.configureFoodRoutes(
                 throw IllegalArgumentException("Barcode must contain only digits")
             }
 
-            log.debug("[FOOD] barcode lookup userId={} barcode={}", authenticatedUser.userId, barcode)
-            val result = foodService.getByBarcode(barcode)
+            val country = call.request.queryParameters["country"]?.trim()?.ifBlank { null }
+            val ipCountry = extractIpCountry(call.request.headers)
+
+            log.debug(
+                "[FOOD] barcode lookup userId={} barcode={} country={} ipCountry={}",
+                authenticatedUser.userId, barcode, country, ipCountry
+            )
+            val result = foodService.getByBarcode(barcode, country, ipCountry)
 
             call.respond(
                 HttpStatusCode.OK,
