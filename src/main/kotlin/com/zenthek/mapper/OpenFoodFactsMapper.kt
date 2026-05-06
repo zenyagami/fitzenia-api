@@ -95,8 +95,9 @@ object OpenFoodFactsMapper {
     private fun buildServings(servingSize: String?, servingQuantity: Float?, nutritionPer100g: NutritionInfo): List<ServingSize> {
         val servings = mutableListOf<ServingSize>()
 
-        servings.add(ServingSize(name = "100g", weightGrams = 100f, nutrition = nutritionPer100g))
-
+        // Labeled household serving (when present) goes first — it's the user-facing default.
+        // "100g" is a reference unit and goes last. Falls back to "100g" only when no labeled
+        // serving is available.
         if (servingQuantity != null && servingQuantity > 0f && servingQuantity != 100f) {
             servings.add(
                 ServingSize(
@@ -106,6 +107,8 @@ object OpenFoodFactsMapper {
                 )
             )
         }
+
+        servings.add(ServingSize(name = "100g", weightGrams = 100f, nutrition = nutritionPer100g))
 
         return servings
     }

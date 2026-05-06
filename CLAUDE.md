@@ -19,7 +19,7 @@ Stateless, scales-to-zero on Google Cloud Run. Containerized with Jib (no Docker
 | Concern | Library | Notes |
 |---|---|---|
 | Server | Ktor 3.2.3 (Netty) | `EngineMain`, `application.conf` references `com.zenthek.fitzenio.rest.ApplicationKt.module` |
-| HTTP client | Ktor 3.2.3 (CIO) | One shared instance; 10s request / 5s connect timeouts |
+| HTTP client | Ktor 3.2.3 (CIO) | One shared instance; 15s request / 10s connect timeouts |
 | Auth | `ktor-server-auth` + `ktor-server-auth-jwt` | Supabase JWT via JWKS (default) or remote `/auth/v1/user` fallback |
 | Rate limit | `ktor-server-rate-limit` | Per-user buckets keyed off `AuthenticatedUserContext.userId` |
 | Database | Supabase | User-scoped REST via `SupabaseClient`; service-role admin via `SupabaseAdminGateway` + `CanonicalCatalogClient` |
@@ -415,7 +415,7 @@ See `DEPLOY.md` for the full deployment guide. Cloud Run configs: `cloud-run-con
 - **`gpt-image-2` requires a verified OpenAI org + Tier 2+ for full parallelism.** On Tier 1 (5 IPM cap), the feature ships with `numRungs=3` so a single ladder fits the cap with headroom. Bump to 5 once on Tier 2.
 - **`ai_progress_ladder` and `ai_progress_ladder_rung` have no client DELETE policy** — the client must call `DELETE /api/progress/ladders/{id}` so storage blob cleanup is guaranteed. A direct `supabase.from(...).delete()` will fail under RLS.
 - **Stale-after-delete tokens**: a 409 with Postgres `23503` against `*_user_id_fkey` on insert is mapped to `UnauthorizedException` (401), not 500.
-- **One Ktor client** is shared across all upstream services (`HttpTimeout: requestTimeoutMillis = 10_000, connectTimeoutMillis = 5_000`). Don't spin up extras per-service.
+- **One Ktor client** is shared across all upstream services (`HttpTimeout: requestTimeoutMillis = 15_000, connectTimeoutMillis = 10_000`). Don't spin up extras per-service.
 - **Stateless** — only in-memory caches are the Gemini context cache ID and (legacy) FatSecret token, both Mutex-protected and rebuilt on cold start.
 
 ---

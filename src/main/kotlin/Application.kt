@@ -284,7 +284,7 @@ fun buildHttpClient(): HttpClient = HttpClient(CIO) {
         json(Json { ignoreUnknownKeys = true })
     }
     install(HttpTimeout) {
-        requestTimeoutMillis = 10_000
-        connectTimeoutMillis = 5_000
+        requestTimeoutMillis = 15_000
+        connectTimeoutMillis = 10_000
     }
 }

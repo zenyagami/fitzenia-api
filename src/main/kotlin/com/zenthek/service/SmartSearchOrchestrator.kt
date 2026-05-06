@@ -859,19 +859,24 @@ class SmartSearchOrchestrator internal constructor(
             barcode = null,
             source = FoodSource.CANONICAL,
             imageUrl = null,
-            servings = servings.sortedWith(hundredGramsFirst).map { it.toServingSize() },
+            servings = servings.sortedWith(labeledFirst).map { it.toServingSize() },
             aiGenerated = aiGenerated,
             confidence = confidence,
             canonicalGroupId = canonicalGroupId
         )
     }
 
-    private val hundredGramsFirst = Comparator<CanonicalServingEntity> { a, b ->
+    // Labeled household serving (e.g. "1 piece", "1 cup") sorts before "100g".
+    // 100g is a reference unit, not the user-facing default — anything that is NOT
+    // ~100g goes first; ~100g rows go to the end. Stable sort preserves original
+    // order among non-100g servings. Returning a non-100g first lets the client
+    // use servings[0] as the default selection for natural household units.
+    private val labeledFirst = Comparator<CanonicalServingEntity> { a, b ->
         val aIs = abs(a.weightGrams - 100f) < 0.5f
         val bIs = abs(b.weightGrams - 100f) < 0.5f
         when {
-            aIs && !bIs -> -1
-            !aIs && bIs -> 1
+            aIs && !bIs -> 1
+            !aIs && bIs -> -1
             else -> 0
         }
     }
