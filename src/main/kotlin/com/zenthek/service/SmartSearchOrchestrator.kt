@@ -23,7 +23,9 @@ import com.zenthek.model.ResultKind
 import com.zenthek.model.ServingSize
 import com.zenthek.model.SmartSearchResponse
 import com.zenthek.model.UpstreamSearchPage
+import com.zenthek.mapper.OpenFoodFactsMapper
 import com.zenthek.upstream.supabase.CanonicalCatalogGateway
+import com.zenthek.upstream.supabase.OffMirrorGateway
 import com.zenthek.model.SearchStreamBestMatch
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.TimeoutCancellationException
@@ -85,7 +87,16 @@ class SmartSearchOrchestrator internal constructor(
     private val catalog: CanonicalCatalogGateway,
     private val ai: AiSearchClient,
     private val config: SmartSearchConfig,
-    private val backgroundScope: CoroutineScope
+    private val backgroundScope: CoroutineScope,
+    /**
+     * Local OFF mirror gateway. Non-null in production (when
+     * `OFF_MIRROR_READ_ENABLED=true`), null in development. When non-null,
+     * mirror candidates are fanned out in parallel with live OFF + USDA and
+     * dedup-merged before classification — duplicates by `FoodItem.id` keep
+     * the mirror hit (cheaper, identical payload). Null skips the mirror branch
+     * entirely.
+     */
+    private val offMirror: OffMirrorGateway? = null,
 ) {
     private val log = LoggerFactory.getLogger(SmartSearchOrchestrator::class.java)
 
@@ -446,12 +457,47 @@ class SmartSearchOrchestrator internal constructor(
                 UpstreamSearchPage.EMPTY
             }
         }
+        val mirrorDeferred = async { fetchMirrorCandidates(normalizedQuery, country, pageSize) }
         val off = offDeferred.await()
         val usda = usdaDeferred.await()
+        val mirror = mirrorDeferred.await()
+        // Mirror first so dedup (by FoodItem.id) prefers mirror rows over the
+        // identical live OFF rows. USDA never overlaps by id (different prefix).
         UpstreamSearchPage(
-            items = off.items + usda.items,
-            hasMore = off.hasMore || usda.hasMore
+            items = dedupById(mirror + off.items + usda.items),
+            hasMore = off.hasMore || usda.hasMore,
         )
+    }
+
+    /**
+     * Local mirror candidate recall. Returns empty when [offMirror] is null
+     * (dev) or the gateway errors — never breaks the overall fan-out.
+     * `ResultKind` matches the live-OFF mapper's classification so the
+     * orchestrator's GENERIC/BRANDED bucketing applies uniformly.
+     */
+    private suspend fun fetchMirrorCandidates(
+        normalizedQuery: String,
+        country: String,
+        pageSize: Int,
+    ): List<InternalFoodItem> {
+        val gateway = offMirror ?: return emptyList()
+        val rawCountry = country.takeIf { it != "GLOBAL" }
+        val rows = runCatching { gateway.candidatesFor(normalizedQuery, rawCountry, pageSize).getOrThrow() }
+            .onFailure { log.warn("[SMART] mirror candidatesFor failed: {}", it.message) }
+            .getOrDefault(emptyList())
+        return rows.mapNotNull { row ->
+            val item = OpenFoodFactsMapper.mapMirrorRow(row) ?: return@mapNotNull null
+            // Mirror reflects OFF, which is a branded-products db. Promotion to
+            // GENERIC happens in the orchestrator via `promoteExactMatchesToGeneric`.
+            InternalFoodItem(item, ResultKind.BRANDED)
+        }
+    }
+
+    /** Dedups by `FoodItem.id`, keeping the first occurrence (mirror first → wins). */
+    private fun dedupById(items: List<InternalFoodItem>): List<InternalFoodItem> {
+        if (items.isEmpty()) return items
+        val seen = HashSet<String>(items.size)
+        return items.filter { seen.add(it.foodItem.id) }
     }
 
     private suspend fun upstreamOnlySearch(
@@ -474,9 +520,16 @@ class SmartSearchOrchestrator internal constructor(
                 UpstreamSearchPage.EMPTY
             }
         }
+        // Mirror lookup only on page 0 — paginated requests fall back to live
+        // upstream because the mirror RPC isn't pageable yet (would require an
+        // offset arg). page>0 stays exactly as it was before the mirror existed.
+        val mirrorDeferred = async {
+            if (page == 0) fetchMirrorCandidates(normalizedQuery, country, pageSize) else emptyList()
+        }
         val off = offDeferred.await()
         val usda = usdaDeferred.await()
-        val merged = off.items + usda.items
+        val mirror = mirrorDeferred.await()
+        val merged = dedupById(mirror + off.items + usda.items)
         val generic = merged.filter { it.kind == ResultKind.GENERIC }.map { it.foodItem }
         val branded = merged.filter { it.kind == ResultKind.BRANDED }.map { it.foodItem }
         val hasMore = off.hasMore || usda.hasMore || merged.size >= pageSize

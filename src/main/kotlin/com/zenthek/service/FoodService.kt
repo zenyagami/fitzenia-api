@@ -1,20 +1,45 @@
 package com.zenthek.service
 
+import com.zenthek.mapper.OpenFoodFactsMapper
 import com.zenthek.model.FoodItem
 import com.zenthek.upstream.openfoodfacts.OpenFoodFactsClient
+import com.zenthek.upstream.supabase.OffMirrorGateway
 import com.zenthek.upstream.usda.UsdaClient
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import org.slf4j.LoggerFactory
 
 class FoodService(
     private val offClient: OpenFoodFactsClient,
-    private val usdaClient: UsdaClient
+    private val usdaClient: UsdaClient,
+    /**
+     * Local OFF mirror gateway — non-null in production (when
+     * `OFF_MIRROR_READ_ENABLED=true`), null in development. When non-null, the
+     * barcode flow consults the mirror first and falls through to the live OFF
+     * + USDA pair only on a miss. Null preserves the legacy behavior byte-for-byte.
+     */
+    private val offMirror: OffMirrorGateway? = null,
 ) {
+    private val log = LoggerFactory.getLogger(FoodService::class.java)
+
     suspend fun getByBarcode(
         barcode: String,
         country: String? = null,
         ipCountry: String? = null,
     ): FoodItem? {
+        // Mirror first. A hit avoids any live HTTP call; OFF latency on
+        // non-US barcodes was the original motivation for the mirror.
+        if (offMirror != null) {
+            val mirrorHit = offMirror.findByBarcode(barcode)
+                .onFailure { log.warn("[FOOD] mirror database barcode lookup failed: {}", it.message) }
+                .getOrNull()
+                ?.let { OpenFoodFactsMapper.mapMirrorRow(it) }
+            if (mirrorHit != null) {
+                log.debug("[FOOD] mirror_hit barcode={}", barcode)
+                return mirrorHit
+            }
+        }
+
         val usPreferred = isUsPreferred(country, ipCountry)
         var lastException: Exception? = null
 

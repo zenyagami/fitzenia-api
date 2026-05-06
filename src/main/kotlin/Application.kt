@@ -17,6 +17,7 @@ import com.zenthek.service.UserProfileService
 import com.zenthek.upstream.supabase.AiProgressLadderGateway
 import com.zenthek.upstream.supabase.CanonicalCatalogClient
 import com.zenthek.upstream.supabase.CanonicalCatalogGateway
+import com.zenthek.upstream.supabase.OffMirrorGateway
 import com.zenthek.upstream.supabase.SupabaseAdminGateway
 import com.zenthek.upstream.supabase.SupabaseClient
 import com.zenthek.upstream.imageedit.ProgressImageEditClient
@@ -79,7 +80,23 @@ fun Application.module() {
         OpenAiApiService(httpClient, config.apiKeys.openAiApiKey)
     }
 
-    val foodService = FoodService(offClient, usdaClient)
+    // Local OFF mirror — read-side gateway only. Constructed only when
+    // OFF_MIRROR_READ_ENABLED is on (production by default). Dev keeps
+    // offMirrorGateway = null and falls back to the existing live OFF/USDA
+    // path byte-for-byte.
+    val offMirrorGateway: OffMirrorGateway? = if (config.offMirror.readEnabled) {
+        log.info("OFF mirror read path: enabled (off_food → live OFF/USDA fallback)")
+        OffMirrorGateway(
+            httpClient = httpClient,
+            config = config.supabase,
+            serviceRoleKey = config.apiKeys.supabaseServiceRoleKey,
+        )
+    } else {
+        log.info("OFF mirror read path: disabled (live OFF/USDA only)")
+        null
+    }
+
+    val foodService = FoodService(offClient, usdaClient, offMirrorGateway)
     val supabaseClient = SupabaseClient(httpClient, config.supabase)
     val userProfileService = UserProfileService(supabaseClient)
 
@@ -121,7 +138,8 @@ fun Application.module() {
         catalog = canonicalCatalog,
         ai = aiSearchClient,
         config = config.smartSearch,
-        backgroundScope = smartSearchBackgroundScope
+        backgroundScope = smartSearchBackgroundScope,
+        offMirror = offMirrorGateway,
     )
 
     // AI Progress Projections — bytes-in ladder generator + delete endpoint.

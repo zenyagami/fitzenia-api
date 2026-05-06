@@ -1,0 +1,89 @@
+apiVersion: run.googleapis.com/v1
+kind: Job
+metadata:
+  name: off-ingest
+  labels:
+    cloud.googleapis.com/location: europe-north1
+spec:
+  template:
+    spec:
+      # parallelism=1, taskCount=1: a Job execution runs as a single task. Concurrency
+      # between separate executions (e.g. delta + full firing close together) is
+      # serialized by the off_sync_state RUNNING-row check inside the job itself.
+      parallelism: 1
+      taskCount: 1
+      template:
+        spec:
+          # Cloud Run Job timeout. Sized for the full reconcile (multi-GB stream +
+          # batched REST upserts can take 60-90 min on prod). Delta runs finish in
+          # 5-15 min so the headroom is generous.
+          timeoutSeconds: 14400
+          # No retries — a failed run logs FAILED to off_sync_state and exits. The
+          # next scheduled run picks up from the last OK checkpoint. Auto-retry
+          # would just rerun the same expensive stream and trip the
+          # already-running guard.
+          maxRetries: 0
+          containers:
+          - name: off-ingest
+            image: gcr.io/PROJECT_ID/fitzenio-off-ingest:IMAGE_TAG
+            # No `args:` here — the scheduler trigger overrides them via
+            # containerOverrides.args (--kind=delta or --kind=full).
+            resources:
+              limits:
+                cpu: "2"
+                memory: "2Gi"
+            env:
+            - name: APP_ENVIRONMENT
+              value: "PRODUCTION"
+            # OFF mirror flags — explicitly set ON for the prod ingest Job so a
+            # future env-default change can't silently demote it to dry-run.
+            - name: OFF_MIRROR_WRITE_ENABLED
+              value: "true"
+            - name: OFF_MIRROR_READ_ENABLED
+              value: "true"
+            - name: OFF_MIRROR_BATCH_SIZE
+              value: "50"
+            - name: SUPABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: SUPABASE_URL
+                  key: latest
+            - name: SUPABASE_PUBLISHABLE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: SUPABASE_PUBLISHABLE_KEY
+                  key: latest
+            - name: SUPABASE_SERVICE_ROLE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: SUPABASE_SERVICE_ROLE_KEY
+                  key: latest
+            # Below env vars are required by ConfigLoader.createProductionConfig() at
+            # boot. The ingest Job does not USE them — it constructs its own minimal
+            # writers — but ConfigLoader fails fast if any are absent. Wire from
+            # Secret Manager so we don't bake placeholders into the image.
+            - name: FATSECRET_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: FATSECRET_CLIENT_ID
+                  key: latest
+            - name: FATSECRET_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: FATSECRET_CLIENT_SECRET
+                  key: latest
+            - name: USDA_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: USDA_API_KEY
+                  key: latest
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: OPENAI_API_KEY
+                  key: latest
+            - name: GEMINI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: GEMINI_API_KEY
+                  key: latest

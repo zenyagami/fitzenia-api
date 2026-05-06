@@ -11,8 +11,17 @@ kotlin {
     jvmToolchain(21)
 }
 
+// Build artifact selector. Default = the API server. Pass `-PtargetService=ingest`
+// to switch the Jib image + container mainClass to the OFF mirror ingest Job.
+// Both binaries share the same Gradle module / source set; only the entrypoint
+// and image name differ.
+val targetService: String = (project.findProperty("targetService") as String?) ?: "api"
+
+val apiMainClass = "io.ktor.server.netty.EngineMain"
+val ingestMainClass = "com.zenthek.ingest.IngestMainKt"
+
 application {
-    mainClass = "io.ktor.server.netty.EngineMain"
+    mainClass = if (targetService == "ingest") ingestMainClass else apiMainClass
 }
 
 ktor {
@@ -34,17 +43,19 @@ configure<com.google.cloud.tools.jib.gradle.JibExtension> {
         }
     }
     to {
-        image = if (project.hasProperty("prod")) {
-            "gcr.io/fitzenio/fitzenia-api-prod"
-        } else {
-            "gcr.io/fitzenio-debug/fitzenia-api-dev"
+        image = when {
+            targetService == "ingest" && project.hasProperty("prod") -> "gcr.io/fitzenio/fitzenio-off-ingest"
+            targetService == "ingest"                                -> "gcr.io/fitzenio-debug/fitzenio-off-ingest-dev"
+            project.hasProperty("prod")                              -> "gcr.io/fitzenio/fitzenia-api-prod"
+            else                                                     -> "gcr.io/fitzenio-debug/fitzenia-api-dev"
         }
         tags = setOf("latest", System.getenv("TIMESTAMP") ?: System.currentTimeMillis().toString())
     }
     container {
-        ports = listOf("8080")
-        mainClass = "io.ktor.server.netty.EngineMain"
-        // Ensure resources are copied to the correct location in the container
+        // The ingest Job has no listening port (Cloud Run Jobs run to completion);
+        // we still declare 8080 so the API image keeps its current contract.
+        ports = if (targetService == "ingest") emptyList() else listOf("8080")
+        mainClass = if (targetService == "ingest") ingestMainClass else apiMainClass
         workingDirectory = "/app"
     }
     extraDirectories {

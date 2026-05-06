@@ -13,6 +13,24 @@ data class AppConfig(
     val supabase: SupabaseConfig,
     val smartSearch: SmartSearchConfig,
     val aiProgressProjection: AiProgressProjectionConfig,
+    val offMirror: OffMirrorConfig,
+)
+
+/**
+ * OFF mirror feature config. Both flags default from APP_ENVIRONMENT (true in
+ * production, false in development) but are individually overridable via env.
+ *
+ * - [readEnabled]: whether the API consults `off_food` before falling back to
+ *   live OFF/USDA. When false, behavior is byte-identical to the pre-mirror
+ *   code path. Driven by `OFF_MIRROR_READ_ENABLED`.
+ * - [writeEnabled]: whether the ingest Job actually persists rows. When false,
+ *   runs are dry-runs (stream + parse + count, write nothing). Driven by
+ *   `OFF_MIRROR_WRITE_ENABLED`.
+ */
+data class OffMirrorConfig(
+    val readEnabled: Boolean,
+    val writeEnabled: Boolean,
+    val batchSize: Int,
 )
 
 data class ApiKeys(
@@ -133,6 +151,11 @@ private fun parseBoolFlag(value: String?, default: Boolean): Boolean {
     }
 }
 
+internal fun parseOffMirrorBatchSize(value: String?): Int {
+    val parsed = value?.trim()?.toIntOrNull() ?: OFF_MIRROR_DEFAULT_BATCH_SIZE
+    return parsed.coerceIn(OFF_MIRROR_MIN_BATCH_SIZE, OFF_MIRROR_MAX_BATCH_SIZE)
+}
+
 private fun loadSmartSearchConfig(): SmartSearchConfig {
     val enabled = parseBoolFlag(env("SMART_FOOD_SEARCH_ENABLED"), default = true)
     return SmartSearchConfig(
@@ -175,6 +198,15 @@ private fun loadAiProgressProjectionConfig(): AiProgressProjectionConfig = AiPro
     maxParallelRungs = 3,                                   // 5 once on Tier 2+
 )
 
+private fun loadOffMirrorConfig(environment: AppEnvironment): OffMirrorConfig {
+    val isProd = environment == AppEnvironment.PRODUCTION
+    return OffMirrorConfig(
+        readEnabled = parseBoolFlag(env("OFF_MIRROR_READ_ENABLED"), default = isProd),
+        writeEnabled = parseBoolFlag(env("OFF_MIRROR_WRITE_ENABLED"), default = isProd),
+        batchSize = parseOffMirrorBatchSize(env("OFF_MIRROR_BATCH_SIZE")),
+    )
+}
+
 private fun loadSupabaseServiceRoleKey(): String {
     return env("SUPABASE_SERVICE_ROLE_KEY")?.trim()?.ifBlank { null }
         ?: error("Missing SUPABASE_SERVICE_ROLE_KEY")
@@ -193,6 +225,7 @@ object ConfigLoader {
     private fun createDevelopmentConfig(): AppConfig {
         val smartSearch = loadSmartSearchConfig()
         val aiProgressProjection = loadAiProgressProjectionConfig()
+        val offMirror = loadOffMirrorConfig(AppEnvironment.DEVELOPMENT)
         return AppConfig(
             environment = AppEnvironment.DEVELOPMENT,
             apiKeys = ApiKeys(
@@ -212,12 +245,14 @@ object ConfigLoader {
             ),
             smartSearch = smartSearch,
             aiProgressProjection = aiProgressProjection,
+            offMirror = offMirror,
         )
     }
 
     private fun createProductionConfig(): AppConfig {
         val smartSearch = loadSmartSearchConfig()
         val aiProgressProjection = loadAiProgressProjectionConfig()
+        val offMirror = loadOffMirrorConfig(AppEnvironment.PRODUCTION)
         return AppConfig(
             environment = AppEnvironment.PRODUCTION,
             apiKeys = ApiKeys(
@@ -237,6 +272,11 @@ object ConfigLoader {
             ),
             smartSearch = smartSearch,
             aiProgressProjection = aiProgressProjection,
+            offMirror = offMirror,
         )
     }
 }
+
+private const val OFF_MIRROR_DEFAULT_BATCH_SIZE = 100
+private const val OFF_MIRROR_MIN_BATCH_SIZE = 1
+private const val OFF_MIRROR_MAX_BATCH_SIZE = 500

@@ -20,7 +20,7 @@ class OpenFoodFactsClient(private val httpClient: HttpClient) {
     private val userAgent = "Fitzenio/1.0 (Android/iOS app; contact@fitzenio.com)"
 
     suspend fun getByBarcode(barcode: String): FoodItem? {
-        log.info("[OFF] getByBarcode barcode={}", barcode)
+        log.info("[OFF] API  getByBarcode barcode={}", barcode)
         val response = httpClient.get("$baseUrl/api/v3/product/$barcode") {
             header(HttpHeaders.UserAgent, userAgent)
             parameter("fields", "code,product_name,brands,serving_size,serving_quantity,image_url,nutriments")

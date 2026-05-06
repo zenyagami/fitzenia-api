@@ -9,8 +9,56 @@ import com.zenthek.model.ServingSize
 import com.zenthek.upstream.openfoodfacts.dto.OpenFoodFactsNutriments
 import com.zenthek.upstream.openfoodfacts.dto.OpenFoodFactsProduct
 import com.zenthek.upstream.openfoodfacts.dto.OpenFoodFactsV3SearchProduct
+import com.zenthek.upstream.supabase.OffMirrorProduct
 
 object OpenFoodFactsMapper {
+
+    /**
+     * Maps a row from the local OFF mirror (`public.off_food`) into the same
+     * `FoodItem` shape we'd build from a live OFF API hit. Mirror rows always
+     * carry `FoodSource.OPEN_FOOD_FACTS`; the bestMatch caller decides
+     * `ResultKind` (BRANDED if `primaryBrand` is non-null else GENERIC).
+     *
+     * Returns null when the row lacks the minimum fields needed to be useful
+     * (no name, or no resolvable nutrition macros). Same gate the live mappers
+     * apply so a corrupt mirror row never leaks an empty card to the client.
+     */
+    fun mapMirrorRow(row: OffMirrorProduct): FoodItem? {
+        val name = row.productName?.trim()
+        if (name.isNullOrBlank()) return null
+
+        val nutritionPer100g = NutritionInfo(
+            caloriesKcal = row.energyKcal100g ?: 0f,
+            proteinG = row.protein100g ?: 0f,
+            carbsG = row.carbs100g ?: 0f,
+            fatG = row.fat100g ?: 0f,
+            fiberG = row.fiber100g,
+            sodiumMg = row.sodium100g?.let { it * 1000f }, // mirror stores grams; client expects mg
+            sugarG = row.sugars100g,
+            saturatedFatG = row.saturatedFat100g,
+            cholesterolMg = null,
+            potassiumMg = null,
+            calciumMg = null,
+            ironMg = null,
+        )
+        if (nutritionPer100g.caloriesKcal == 0f && nutritionPer100g.proteinG == 0f && nutritionPer100g.fatG == 0f) {
+            return null
+        }
+
+        val brand = row.primaryBrand?.trim()?.ifBlank { null }
+            ?: row.brands?.firstOrNull()?.trim()?.ifBlank { null }
+        val servings = buildServings(row.servingSize, row.servingQuantity, nutritionPer100g)
+
+        return FoodItem(
+            id = "OFF_${row.code}",
+            name = name,
+            brand = brand,
+            barcode = row.code,
+            source = FoodSource.OPEN_FOOD_FACTS,
+            imageUrl = row.imageUrl,
+            servings = servings,
+        )
+    }
 
     fun map(product: OpenFoodFactsProduct): FoodItem? {
         val name = product.productName?.trim()

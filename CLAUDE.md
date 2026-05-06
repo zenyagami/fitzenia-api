@@ -5,12 +5,14 @@
 # CLAUDE.md — Fitzenio API
 
 Ktor-based Kotlin/JVM service for the Fitzenio mobile app:
-- **Food search & barcode lookup** — fans out to Open Food Facts + USDA, layers a shared canonical catalog (Supabase) plus Gemini-backed AI ranking/generation on top (Smart Food Search).
+- **Food search & barcode lookup** — fans out to Open Food Facts + USDA, layers a shared canonical catalog (Supabase) plus Gemini-backed AI ranking/generation on top (Smart Food Search). In production, an additional local **OFF mirror** is consulted first (see "OFF mirror" below).
 - **AI image analysis** — meal photo → structured nutrition payload, Gemini (primary) or OpenAI (fallback).
 - **User onboarding** — registers `user_profile` / `user_goal` / `calorie_target` rows in Supabase (RLS-scoped via the caller's JWT).
 - **Account deletion** — three-stage hard wipe (Storage → Postgres → Auth), service-role only.
 
 Stateless, scales-to-zero on Google Cloud Run. Containerized with Jib (no Dockerfile).
+
+The same Gradle module also produces a separate **Cloud Run Job** image (`com.zenthek.ingest.IngestMain`, `gcr.io/fitzenio/fitzenio-off-ingest`) that runs daily/weekly to keep the local OFF mirror current. Built with `./gradlew jib -Pprod -PtargetService=ingest`.
 
 ---
 
@@ -103,6 +105,7 @@ deploy.sh, deploy-dev.sh, grant-secrets.sh, sync-secrets.sh, check-cloud-run-env
 | Method | Path | Auth | Rate-limit bucket | Purpose |
 |---|---|---|---|---|
 | GET | `/health` | public | — | Liveness probe |
+| GET | `/credits` | public | — | Data-source attribution (ODbL for OFF, public domain for USDA) |
 | GET | `/api/food/autocomplete?q=&limit=` | JWT | `food-search` | Suggestions (OFF only) |
 | GET | `/api/food/search?q=&locale=&country=&page=&pageSize=` | JWT | `food-search` | Smart search (canonical + upstream + AI bestMatch) |
 | GET | `/api/food/search/stream?...` | JWT | `food-search` | SSE: emits `upstream`, `bestMatch`, `done` (or `error`) |
@@ -246,6 +249,30 @@ Photo-AI estimate is **not** persisted to `weight_entry` — it lives only on th
 
 ---
 
+## OFF mirror
+
+Production mirrors the entire Open Food Facts catalog into Supabase (`public.off_food`) so the API can resolve barcodes and search candidates without round-tripping to OFF on every request. Reads are gated by `OFF_MIRROR_READ_ENABLED` (default true in prod, false in dev); when disabled, behavior is byte-identical to the pre-mirror code path.
+
+**Read path (prod only).** `OffMirrorGateway` (service-role REST) is constructed in `Application.module()` only when `readEnabled`. Two access methods:
+- `findByBarcode(code)` — PK lookup; called by `FoodService.getByBarcode` BEFORE the live OFF/USDA fallback. A miss falls through to the existing path so brand-new barcodes (added between sync windows) still resolve.
+- `candidatesFor(query, country)` — pg_trgm-ranked recall via the `public.off_search_candidates(p_query, p_country, p_limit)` RPC; called by `SmartSearchOrchestrator` IN PARALLEL with live OFF + USDA on page 0. Mirror hits dedup-merge with live hits by `FoodItem.id` (mirror wins, identical payload, cheaper). Page > 0 stays upstream-only.
+
+**Write path (separate Cloud Run Job, prod only).** `com.zenthek.ingest.IngestMain` builds a separate Jib image (`gcr.io/fitzenio/fitzenio-off-ingest`). Two scheduled invocations:
+- **Daily delta** (`--kind=delta`, 03:07 UTC). Reads `https://static.openfoodfacts.org/data/delta/index.txt`, fetches every `openfoodfacts_products_<from>_<to>.json.gz` newer than the last successful checkpoint, batches 500-row upserts via the `public.upsert_off_products(items JSONB)` RPC. Aborts with `status=FAILED` if the checkpoint is older than ~13 days (outside OFF's 14-day delta window — full reconcile required).
+- **Weekly full reconcile** (`--kind=full`, Sun 04:13 UTC). Streams `openfoodfacts-products.jsonl.gz` (multi-GB, gzip-decoded line-by-line, no disk), batched upsert, then calls `public.soft_delete_off_unseen(p_before)` with the run-start cutoff to tombstone rows missing from the dump. Soft-delete correctness depends on the upsert RPC always refreshing `synced_at = now()` on conflict (matched or not).
+
+**Concurrency.** Both jobs check `off_sync_state` for an active RUNNING row at the start; if one exists and isn't stale (>6h), the new run exits with `status=CANCELLED`. This serializes delta + full when the schedules drift.
+
+**Operations.** Job deploy command, manual smoke tests, scheduler config, and the troubleshooting catalogue (NUL bytes, pg_trgm schema, statement timeout, stale RUNNING rows) live in `DEPLOY.md` under "OFF Mirror Ingest Job".
+
+**Schema parity.** `db/migrations/002_off_mirror.sql` is applied to BOTH dev (`tpslgveyjldykkkhnifs`) and prod (`anqvtpesmddllplyhkrc`) Supabase projects. Dev tables stay empty (`OFF_MIRROR_WRITE_ENABLED=false` → all local ingest runs are dry-runs). The schema parity prevents drift bugs and lets dev exercise the read path against a single test row when needed.
+
+**Hybrid storage.** Per-100g macros (`energy_kcal_100g`, `protein_100g`, `carbs_100g`, `sugars_100g`, `fat_100g`, `saturated_fat_100g`, `fiber_100g`, `sodium_100g`) live in typed columns; long-tail nutrients live in `nutriments JSONB`. Indexes: `gin (product_name gin_trgm_ops) WHERE deleted_at IS NULL`, `gin (countries_tags) WHERE deleted_at IS NULL`, `(last_modified_t)`, `(primary_brand) WHERE deleted_at IS NULL`. RLS enabled with no policies — service-role bypasses, anon/authenticated denied.
+
+**ODbL.** OFF data is licensed under the Open Database License + Database Contents License. Attribution is served by the public `GET /credits` endpoint at launch (not a follow-up). Mirror rows live in `off_food` and are NEVER merged into `canonical_food_item` — the AI catalog stays separate from OFF data.
+
+---
+
 ## Account deletion
 
 `DELETE /api/account` (`account` bucket, 3 req/min/user) hard-wipes the caller. Implemented by `AccountService` over `SupabaseAdminGateway` (service-role). **Idempotent** — safe to retry on partial failure. Order is intentional:
@@ -320,6 +347,9 @@ data class AppConfig(
 | `AI_SEARCH_GENERATE_TIMEOUT_MS` | no | `8000` | |
 | `SMART_SEARCH_AI_SYNC_ON_MISS` | no | `true` | `true` = canonical immediately (higher latency); `false` = async write-behind (lower latency, first user upstream-only) |
 | `CATALOG_WRITE_CONFIDENCE_THRESHOLD` | no | `0.7` | min AI confidence to persist |
+| **OFF Mirror** | | | |
+| `OFF_MIRROR_READ_ENABLED` | no | `true` in prod, `false` in dev | API consults `off_food` before the live OFF/USDA fallback |
+| `OFF_MIRROR_WRITE_ENABLED` | no | `true` in prod, `false` in dev | Ingest Job persists rows; `false` forces dry-run mode |
 
 ¹ At least one of `SUPABASE_PUBLISHABLE_KEY` or the env-appropriate legacy anon key must be set.
 
@@ -387,6 +417,8 @@ When tests are explicitly requested, follow the existing style:
 ./gradlew jib -Pprod             # push to GCR (prod: gcr.io/fitzenio/fitzenia-api-prod)
 ./deploy-dev.sh                  # deploy staging  (project fitzenio-debug, service fitzenio-api-dev)
 ./deploy.sh                      # deploy prod     (project fitzenio,       service fitzenio-api-prod)
+./gradlew jib -Pprod -PtargetService=ingest   # build OFF mirror ingest image (prod only)
+./deploy-ingest.sh               # deploy off-ingest Cloud Run Job (prod only) — see DEPLOY.md
 ```
 
 See `DEPLOY.md` for the full deployment guide. Cloud Run configs: `cloud-run-config.yaml` (prod), `cloud-run-config.dev.yaml` (staging). IAM: `grant-secrets.sh`. Local→Secret Manager sync: `sync-secrets.sh`. Diff deployed env vs local: `check-cloud-run-env.sh`.

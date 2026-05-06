@@ -27,6 +27,7 @@ import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import io.ktor.utils.io.*
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import org.slf4j.LoggerFactory
 
@@ -39,6 +40,37 @@ object RateLimitNames {
 
 private val sseJson = Json { ignoreUnknownKeys = true }
 private val log = LoggerFactory.getLogger("com.zenthek.routes.UserRoutes")
+
+@Serializable
+data class DataSourceCredit(
+    val name: String,
+    val url: String,
+    val licenses: List<String>,
+    val notes: String? = null,
+)
+
+@Serializable
+data class CreditsResponse(val sources: List<DataSourceCredit>)
+
+private val CREDITS_RESPONSE = CreditsResponse(
+    sources = listOf(
+        DataSourceCredit(
+            name = "Open Food Facts",
+            url = "https://world.openfoodfacts.org/",
+            licenses = listOf(
+                "Open Database License (ODbL) v1.0 — https://opendatacommons.org/licenses/odbl/1-0/",
+                "Database Contents License (DbCL) v1.0 — https://opendatacommons.org/licenses/dbcl/1-0/",
+            ),
+            notes = "Product data is mirrored locally and refreshed daily; attribution required by ODbL.",
+        ),
+        DataSourceCredit(
+            name = "USDA FoodData Central",
+            url = "https://fdc.nal.usda.gov/",
+            licenses = listOf("U.S. Government Works (public domain)"),
+            notes = null,
+        ),
+    ),
+)
 
 private suspend fun ByteWriteChannel.sendSseEvent(event: String, data: String) {
     writeFully("event: $event\ndata: $data\n\n".toByteArray(Charsets.UTF_8))
@@ -56,6 +88,14 @@ fun Application.configureRouting(
     routing {
         get("/health") {
             call.respond(HttpStatusCode.OK, mapOf("status" to "ok"))
+        }
+
+        // Public attribution endpoint. Open Food Facts data is licensed under
+        // ODbL (database) + DbCL (contents); attribution is required when the
+        // mirror serves food data. USDA FoodData Central is public domain and
+        // listed for completeness.
+        get("/credits") {
+            call.respond(HttpStatusCode.OK, CREDITS_RESPONSE)
         }
 
         authenticate(SUPABASE_AUTH_PROVIDER) {
