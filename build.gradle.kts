@@ -11,17 +11,25 @@ kotlin {
     jvmToolchain(21)
 }
 
-// Build artifact selector. Default = the API server. Pass `-PtargetService=ingest`
-// to switch the Jib image + container mainClass to the OFF mirror ingest Job.
-// Both binaries share the same Gradle module / source set; only the entrypoint
-// and image name differ.
+// Build artifact selector. Default = the API server. Pass
+// `-PtargetService=ingest` for the OFF mirror ingest Job, or
+// `-PtargetService=usda-ingest` for the USDA mirror ingest Job. All binaries
+// share the same Gradle module / source set; only the entrypoint and image
+// name differ.
 val targetService: String = (project.findProperty("targetService") as String?) ?: "api"
 
 val apiMainClass = "io.ktor.server.netty.EngineMain"
 val ingestMainClass = "com.zenthek.ingest.IngestMainKt"
+val usdaIngestMainClass = "com.zenthek.ingest.UsdaIngestMainKt"
+
+val resolvedMainClass: String = when (targetService) {
+    "ingest" -> ingestMainClass
+    "usda-ingest" -> usdaIngestMainClass
+    else -> apiMainClass
+}
 
 application {
-    mainClass = if (targetService == "ingest") ingestMainClass else apiMainClass
+    mainClass = resolvedMainClass
 }
 
 ktor {
@@ -44,18 +52,21 @@ configure<com.google.cloud.tools.jib.gradle.JibExtension> {
     }
     to {
         image = when {
-            targetService == "ingest" && project.hasProperty("prod") -> "gcr.io/fitzenio/fitzenio-off-ingest"
-            targetService == "ingest"                                -> "gcr.io/fitzenio-debug/fitzenio-off-ingest-dev"
-            project.hasProperty("prod")                              -> "gcr.io/fitzenio/fitzenia-api-prod"
-            else                                                     -> "gcr.io/fitzenio-debug/fitzenia-api-dev"
+            targetService == "ingest" && project.hasProperty("prod")      -> "gcr.io/fitzenio/fitzenio-off-ingest"
+            targetService == "ingest"                                     -> "gcr.io/fitzenio-debug/fitzenio-off-ingest-dev"
+            targetService == "usda-ingest" && project.hasProperty("prod") -> "gcr.io/fitzenio/fitzenio-usda-ingest"
+            targetService == "usda-ingest"                                -> "gcr.io/fitzenio-debug/fitzenio-usda-ingest-dev"
+            project.hasProperty("prod")                                   -> "gcr.io/fitzenio/fitzenia-api-prod"
+            else                                                          -> "gcr.io/fitzenio-debug/fitzenia-api-dev"
         }
         tags = setOf("latest", System.getenv("TIMESTAMP") ?: System.currentTimeMillis().toString())
     }
     container {
-        // The ingest Job has no listening port (Cloud Run Jobs run to completion);
+        // Ingest Jobs have no listening port (Cloud Run Jobs run to completion);
         // we still declare 8080 so the API image keeps its current contract.
-        ports = if (targetService == "ingest") emptyList() else listOf("8080")
-        mainClass = if (targetService == "ingest") ingestMainClass else apiMainClass
+        val isIngest = targetService == "ingest" || targetService == "usda-ingest"
+        ports = if (isIngest) emptyList() else listOf("8080")
+        mainClass = resolvedMainClass
         workingDirectory = "/app"
     }
     extraDirectories {

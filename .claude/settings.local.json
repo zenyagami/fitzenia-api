@@ -94,7 +94,10 @@
       "Bash(PLUGIN_ROOT=\"/Users/zenkun/.claude/plugins/cache/thedotmack/claude-mem/12.7.2\" node /Users/zenkun/.claude/plugins/cache/thedotmack/claude-mem/12.7.2/scripts/worker-cli.js search --query \"country-aware barcode\" --project \"Fitzenia-api\" --limit 20)",
       "Bash(PLUGIN_ROOT=\"/Users/zenkun/.claude/plugins/cache/thedotmack/claude-mem/12.7.2\" node *)",
       "Bash(PLUGIN_ROOT=\"/Users/zenkun/.claude/plugins/cache/thedotmack/claude-mem/12.7.2\" printf '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"search\",\"arguments\":{\"query\":\"S36\",\"project\":\"Fitzenia-api\",\"limit\":20}}}\\\\n')",
-      "Bash(node /Users/zenkun/.claude/plugins/cache/thedotmack/claude-mem/12.7.2/scripts/mcp-server.cjs)"
+      "Bash(node /Users/zenkun/.claude/plugins/cache/thedotmack/claude-mem/12.7.2/scripts/mcp-server.cjs)",
+      "WebFetch(domain:fdc.nal.usda.gov)",
+      "WebFetch(domain:api.nal.usda.gov)",
+      "Bash(./gradlew dependencies *)"
     ]
   },
   "enableAllProjectMcpServers": true,

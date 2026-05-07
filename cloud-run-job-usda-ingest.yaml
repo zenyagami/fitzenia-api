@@ -1,0 +1,89 @@
+apiVersion: run.googleapis.com/v1
+kind: Job
+metadata:
+  name: usda-ingest
+  labels:
+    cloud.googleapis.com/location: europe-north1
+spec:
+  template:
+    spec:
+      # parallelism=1, taskCount=1: a Job execution runs as a single task.
+      # Concurrency between separate executions is serialized by the
+      # usda_sync_state RUNNING-row guard inside the job itself (8h staleness
+      # window — Branded reconcile is bigger than OFF).
+      parallelism: 1
+      taskCount: 1
+      template:
+        spec:
+          # 4 hours covers a Branded reconcile (3.1 GB unzipped, 60–90 min on
+          # prod) plus headroom. Most monthly invocations no-op in <60 s when
+          # the release_date matches the last successful run.
+          timeoutSeconds: 14400
+          # No retries — a failed run logs FAILED to usda_sync_state and exits.
+          # The next monthly cron picks up. Auto-retry would just rerun the
+          # same expensive stream and trip the already-running guard.
+          maxRetries: 0
+          containers:
+          - name: usda-ingest
+            image: gcr.io/PROJECT_ID/fitzenio-usda-ingest:IMAGE_TAG
+            # No `args:` here — the scheduler trigger overrides them via
+            # containerOverrides.args (--kind=full).
+            resources:
+              limits:
+                cpu: "2"
+                memory: "2Gi"
+            env:
+            - name: APP_ENVIRONMENT
+              value: "PRODUCTION"
+            # USDA mirror flags — explicitly set ON for the prod ingest Job so
+            # a future env-default change can't silently demote it to dry-run.
+            - name: USDA_MIRROR_WRITE_ENABLED
+              value: "true"
+            - name: USDA_MIRROR_READ_ENABLED
+              value: "true"
+            - name: USDA_MIRROR_BATCH_SIZE
+              value: "50"
+            - name: SUPABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: SUPABASE_URL
+                  key: latest
+            - name: SUPABASE_PUBLISHABLE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: SUPABASE_PUBLISHABLE_KEY
+                  key: latest
+            - name: SUPABASE_SERVICE_ROLE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: SUPABASE_SERVICE_ROLE_KEY
+                  key: latest
+            # Below env vars are required by ConfigLoader.createProductionConfig() at
+            # boot. The ingest Job does not USE them — it constructs its own minimal
+            # writers — but ConfigLoader fails fast if any are absent. Wire from
+            # Secret Manager so we don't bake placeholders into the image.
+            - name: FATSECRET_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: FATSECRET_CLIENT_ID
+                  key: latest
+            - name: FATSECRET_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: FATSECRET_CLIENT_SECRET
+                  key: latest
+            - name: USDA_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: USDA_API_KEY
+                  key: latest
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: OPENAI_API_KEY
+                  key: latest
+            - name: GEMINI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: GEMINI_API_KEY
+                  key: latest

@@ -14,6 +14,7 @@ data class AppConfig(
     val smartSearch: SmartSearchConfig,
     val aiProgressProjection: AiProgressProjectionConfig,
     val offMirror: OffMirrorConfig,
+    val usdaMirror: UsdaMirrorConfig,
 )
 
 /**
@@ -28,6 +29,23 @@ data class AppConfig(
  *   `OFF_MIRROR_WRITE_ENABLED`.
  */
 data class OffMirrorConfig(
+    val readEnabled: Boolean,
+    val writeEnabled: Boolean,
+    val batchSize: Int,
+)
+
+/**
+ * USDA mirror feature config. Same shape as [OffMirrorConfig] — both flags
+ * default from APP_ENVIRONMENT (true in production, false in development) and
+ * are individually overridable via env.
+ *
+ * - [readEnabled]: whether the API consults `usda_food` after the OFF mirror
+ *   miss and before falling back to live OFF/USDA. Driven by
+ *   `USDA_MIRROR_READ_ENABLED`.
+ * - [writeEnabled]: whether the USDA ingest Job actually persists rows.
+ *   `false` forces dry-run mode. Driven by `USDA_MIRROR_WRITE_ENABLED`.
+ */
+data class UsdaMirrorConfig(
     val readEnabled: Boolean,
     val writeEnabled: Boolean,
     val batchSize: Int,
@@ -156,6 +174,11 @@ internal fun parseOffMirrorBatchSize(value: String?): Int {
     return parsed.coerceIn(OFF_MIRROR_MIN_BATCH_SIZE, OFF_MIRROR_MAX_BATCH_SIZE)
 }
 
+internal fun parseUsdaMirrorBatchSize(value: String?): Int {
+    val parsed = value?.trim()?.toIntOrNull() ?: USDA_MIRROR_DEFAULT_BATCH_SIZE
+    return parsed.coerceIn(USDA_MIRROR_MIN_BATCH_SIZE, USDA_MIRROR_MAX_BATCH_SIZE)
+}
+
 private fun loadSmartSearchConfig(): SmartSearchConfig {
     val enabled = parseBoolFlag(env("SMART_FOOD_SEARCH_ENABLED"), default = true)
     return SmartSearchConfig(
@@ -207,6 +230,15 @@ private fun loadOffMirrorConfig(environment: AppEnvironment): OffMirrorConfig {
     )
 }
 
+private fun loadUsdaMirrorConfig(environment: AppEnvironment): UsdaMirrorConfig {
+    val isProd = environment == AppEnvironment.PRODUCTION
+    return UsdaMirrorConfig(
+        readEnabled = parseBoolFlag(env("USDA_MIRROR_READ_ENABLED"), default = isProd),
+        writeEnabled = parseBoolFlag(env("USDA_MIRROR_WRITE_ENABLED"), default = isProd),
+        batchSize = parseUsdaMirrorBatchSize(env("USDA_MIRROR_BATCH_SIZE")),
+    )
+}
+
 private fun loadSupabaseServiceRoleKey(): String {
     return env("SUPABASE_SERVICE_ROLE_KEY")?.trim()?.ifBlank { null }
         ?: error("Missing SUPABASE_SERVICE_ROLE_KEY")
@@ -226,6 +258,7 @@ object ConfigLoader {
         val smartSearch = loadSmartSearchConfig()
         val aiProgressProjection = loadAiProgressProjectionConfig()
         val offMirror = loadOffMirrorConfig(AppEnvironment.DEVELOPMENT)
+        val usdaMirror = loadUsdaMirrorConfig(AppEnvironment.DEVELOPMENT)
         return AppConfig(
             environment = AppEnvironment.DEVELOPMENT,
             apiKeys = ApiKeys(
@@ -246,6 +279,7 @@ object ConfigLoader {
             smartSearch = smartSearch,
             aiProgressProjection = aiProgressProjection,
             offMirror = offMirror,
+            usdaMirror = usdaMirror,
         )
     }
 
@@ -253,6 +287,7 @@ object ConfigLoader {
         val smartSearch = loadSmartSearchConfig()
         val aiProgressProjection = loadAiProgressProjectionConfig()
         val offMirror = loadOffMirrorConfig(AppEnvironment.PRODUCTION)
+        val usdaMirror = loadUsdaMirrorConfig(AppEnvironment.PRODUCTION)
         return AppConfig(
             environment = AppEnvironment.PRODUCTION,
             apiKeys = ApiKeys(
@@ -273,6 +308,7 @@ object ConfigLoader {
             smartSearch = smartSearch,
             aiProgressProjection = aiProgressProjection,
             offMirror = offMirror,
+            usdaMirror = usdaMirror,
         )
     }
 }
@@ -280,3 +316,7 @@ object ConfigLoader {
 private const val OFF_MIRROR_DEFAULT_BATCH_SIZE = 100
 private const val OFF_MIRROR_MIN_BATCH_SIZE = 1
 private const val OFF_MIRROR_MAX_BATCH_SIZE = 500
+
+private const val USDA_MIRROR_DEFAULT_BATCH_SIZE = 100
+private const val USDA_MIRROR_MIN_BATCH_SIZE = 1
+private const val USDA_MIRROR_MAX_BATCH_SIZE = 500

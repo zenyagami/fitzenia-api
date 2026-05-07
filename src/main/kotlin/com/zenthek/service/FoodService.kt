@@ -1,10 +1,12 @@
 package com.zenthek.service
 
 import com.zenthek.mapper.OpenFoodFactsMapper
+import com.zenthek.mapper.UsdaMapper
 import com.zenthek.model.FoodItem
 import com.zenthek.upstream.openfoodfacts.OpenFoodFactsClient
 import com.zenthek.upstream.supabase.OffMirrorGateway
 import com.zenthek.upstream.usda.UsdaClient
+import com.zenthek.upstream.usda.UsdaMirrorGateway
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import org.slf4j.LoggerFactory
@@ -19,6 +21,13 @@ class FoodService(
      * + USDA pair only on a miss. Null preserves the legacy behavior byte-for-byte.
      */
     private val offMirror: OffMirrorGateway? = null,
+    /**
+     * Local USDA mirror gateway — non-null in production (when
+     * `USDA_MIRROR_READ_ENABLED=true`), null in development. Consulted after
+     * the OFF mirror miss and before the live OFF/USDA fallback. US-only data
+     * (no country filter on `candidatesFor`).
+     */
+    private val usdaMirror: UsdaMirrorGateway? = null,
 ) {
     private val log = LoggerFactory.getLogger(FoodService::class.java)
 
@@ -27,15 +36,26 @@ class FoodService(
         country: String? = null,
         ipCountry: String? = null,
     ): FoodItem? {
-        // Mirror first. A hit avoids any live HTTP call; OFF latency on
-        // non-US barcodes was the original motivation for the mirror.
+        // Mirror first (OFF then USDA). A hit avoids any live HTTP call; OFF
+        // latency on non-US barcodes and FDC API rate limits were the original
+        // motivations.
         if (offMirror != null) {
             val mirrorHit = offMirror.findByBarcode(barcode)
-                .onFailure { log.warn("[FOOD] mirror database barcode lookup failed: {}", it.message) }
+                .onFailure { log.warn("[FOOD] OFF mirror barcode lookup failed: {}", it.message) }
                 .getOrNull()
                 ?.let { OpenFoodFactsMapper.mapMirrorRow(it) }
             if (mirrorHit != null) {
-                log.debug("[FOOD] mirror_hit barcode={}", barcode)
+                log.debug("[FOOD] off_mirror_hit barcode={}", barcode)
+                return mirrorHit
+            }
+        }
+        if (usdaMirror != null) {
+            val mirrorHit = usdaMirror.findByBarcode(barcode)
+                .onFailure { log.warn("[FOOD] USDA mirror barcode lookup failed: {}", it.message) }
+                .getOrNull()
+                ?.let { UsdaMapper.mapMirrorRow(it) }
+            if (mirrorHit != null) {
+                log.debug("[FOOD] usda_mirror_hit barcode={}", barcode)
                 return mirrorHit
             }
         }

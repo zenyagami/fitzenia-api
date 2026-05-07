@@ -12,7 +12,9 @@ Ktor-based Kotlin/JVM service for the Fitzenio mobile app:
 
 Stateless, scales-to-zero on Google Cloud Run. Containerized with Jib (no Dockerfile).
 
-The same Gradle module also produces a separate **Cloud Run Job** image (`com.zenthek.ingest.IngestMain`, `gcr.io/fitzenio/fitzenio-off-ingest`) that runs daily/weekly to keep the local OFF mirror current. Built with `./gradlew jib -Pprod -PtargetService=ingest`.
+The same Gradle module also produces two separate **Cloud Run Job** images:
+- `com.zenthek.ingest.IngestMain` → `gcr.io/fitzenio/fitzenio-off-ingest` — daily/weekly OFF mirror sync. Build: `./gradlew jib -Pprod -PtargetService=ingest`.
+- `com.zenthek.ingest.UsdaIngestMain` → `gcr.io/fitzenio/fitzenio-usda-ingest` — monthly USDA mirror sync (FDC bi-annual snapshots). Build: `./gradlew jib -Pprod -PtargetService=usda-ingest`.
 
 ---
 
@@ -254,8 +256,8 @@ Photo-AI estimate is **not** persisted to `weight_entry` — it lives only on th
 Production mirrors the entire Open Food Facts catalog into Supabase (`public.off_food`) so the API can resolve barcodes and search candidates without round-tripping to OFF on every request. Reads are gated by `OFF_MIRROR_READ_ENABLED` (default true in prod, false in dev); when disabled, behavior is byte-identical to the pre-mirror code path.
 
 **Read path (prod only).** `OffMirrorGateway` (service-role REST) is constructed in `Application.module()` only when `readEnabled`. Two access methods:
-- `findByBarcode(code)` — PK lookup; called by `FoodService.getByBarcode` BEFORE the live OFF/USDA fallback. A miss falls through to the existing path so brand-new barcodes (added between sync windows) still resolve.
-- `candidatesFor(query, country)` — pg_trgm-ranked recall via the `public.off_search_candidates(p_query, p_country, p_limit)` RPC; called by `SmartSearchOrchestrator` IN PARALLEL with live OFF + USDA on page 0. Mirror hits dedup-merge with live hits by `FoodItem.id` (mirror wins, identical payload, cheaper). Page > 0 stays upstream-only.
+- `findByBarcode(code)` — PK lookup; called by `FoodService.getByBarcode` BEFORE the USDA mirror, OFF live, and USDA live tiers (sequential mirror→mirror→live→live; first non-empty wins). A miss falls through to the existing path so brand-new barcodes still resolve.
+- `candidatesFor(query, country)` — pg_trgm-ranked recall via the `public.off_search_candidates(p_query, p_country, p_limit)` RPC; called by `SmartSearchOrchestrator` in **phase 1** of a two-phase fan-out (parallel with the USDA mirror). When phase 1 returns ≥`MIN_MIRROR_RESULTS_FOR_LIVE_SKIP` (=5) hits, the live tier is skipped entirely (~500 ms+ saved). Otherwise phase 2 fans out live OFF + USDA; mirror hits dedup-merge with live hits by `FoodItem.id`. Page > 0 stays upstream-only.
 
 **Write path (separate Cloud Run Job, prod only).** `com.zenthek.ingest.IngestMain` builds a separate Jib image (`gcr.io/fitzenio/fitzenio-off-ingest`). Two scheduled invocations:
 - **Daily delta** (`--kind=delta`, 03:07 UTC). Reads `https://static.openfoodfacts.org/data/delta/index.txt`, fetches every `openfoodfacts_products_<from>_<to>.json.gz` newer than the last successful checkpoint, batches 500-row upserts via the `public.upsert_off_products(items JSONB)` RPC. Aborts with `status=FAILED` if the checkpoint is older than ~13 days (outside OFF's 14-day delta window — full reconcile required).
@@ -270,6 +272,33 @@ Production mirrors the entire Open Food Facts catalog into Supabase (`public.off
 **Hybrid storage.** Per-100g macros (`energy_kcal_100g`, `protein_100g`, `carbs_100g`, `sugars_100g`, `fat_100g`, `saturated_fat_100g`, `fiber_100g`, `sodium_100g`) live in typed columns; long-tail nutrients live in `nutriments JSONB`. Indexes: `gin (product_name gin_trgm_ops) WHERE deleted_at IS NULL`, `gin (countries_tags) WHERE deleted_at IS NULL`, `(last_modified_t)`, `(primary_brand) WHERE deleted_at IS NULL`. RLS enabled with no policies — service-role bypasses, anon/authenticated denied.
 
 **ODbL.** OFF data is licensed under the Open Database License + Database Contents License. Attribution is served by the public `GET /credits` endpoint at launch (not a follow-up). Mirror rows live in `off_food` and are NEVER merged into `canonical_food_item` — the AI catalog stays separate from OFF data.
+
+---
+
+## USDA mirror
+
+Production also mirrors the USDA FoodData Central (FDC) **Branded** + **Foundation** datasets into Supabase (`public.usda_food`) so US-grocery barcodes and search candidates resolve from local Postgres in ~30 ms most of the time. Reads are gated by `USDA_MIRROR_READ_ENABLED` (default true in prod, false in dev).
+
+**Read path (prod only).** `UsdaMirrorGateway` (service-role REST) is constructed in `Application.module()` only when `readEnabled`. Two access methods:
+- `findByBarcode(code)` — `gtin_upc` lookup; called by `FoodService.getByBarcode` after the OFF mirror miss and before the live OFF/USDA fallback.
+- `candidatesFor(query, limit)` — pg_trgm-ranked recall via `public.usda_search_candidates(p_query, p_limit)`. **No country parameter** — FDC is US-only data. Called by `SmartSearchOrchestrator` in phase 1 alongside the OFF mirror.
+
+**Write path (separate Cloud Run Job, prod only).** `com.zenthek.ingest.UsdaIngestMain` builds a separate Jib image (`gcr.io/fitzenio/fitzenio-usda-ingest`). One scheduled invocation:
+- **Monthly full reconcile** (`--kind=full`, 1st of month 04:37 UTC). FDC ships **bi-annual full snapshots only** (April + December) — no deltas. The job scrapes `https://fdc.nal.usda.gov/download-datasets/` for the latest dated zip URLs, compares against the last `OK` `release_date` in `usda_sync_state`, and short-circuits with `status=NO_NEW_RELEASE` when unchanged. On a real release, streams Branded (3.1 GB unzipped) then Foundation (6.5 MB) via `ZipInputStream` + Jackson token-streaming, batched 500-row upserts to `public.upsert_usda_foods(items JSONB)`, then `public.soft_delete_usda_unseen(p_before)`.
+
+**Concurrency.** `usda_sync_state.RUNNING` row guard with an **8 h** staleness window (vs OFF's 6 h — Branded reconcile is bigger). New invocations exit with `status=CANCELLED` if a non-stale RUNNING row exists.
+
+**Operations.** Job deploy (`./deploy-usda-ingest.sh`), smoke tests, scheduler config, and troubleshooting in `DEPLOY.md` under "USDA Mirror Ingest Job".
+
+**Schema parity.** `db/migrations/004_usda_mirror.sql` (numbered 004 because 003 is taken by `off_mirror_timeout_hardening` + `off_mirror_trim`) applies to BOTH dev and prod Supabase projects. Dev tables stay empty (`USDA_MIRROR_WRITE_ENABLED=false` in dev → all local ingest runs are dry-runs).
+
+**Hybrid storage.** Same shape as OFF: per-100g macros in typed columns + long-tail nutrients in `nutriments JSONB` keyed by FDC nutrientId. **Unit divergence from OFF**: `sodium_100g` is **milligrams** per 100g (FDC nutrient 1093 reports in mg natively); the read-path mapper passes through unchanged. Other macros are grams per 100g. Indexes: `gin (description gin_trgm_ops) WHERE deleted_at IS NULL`, `(gtin_upc) WHERE deleted_at IS NULL AND gtin_upc IS NOT NULL`, `(data_type) WHERE deleted_at IS NULL`, `gin (brand_owner gin_trgm_ops) WHERE deleted_at IS NULL`. RLS enabled with no policies.
+
+**Macro normalization.** Bulk `foodNutrients[]` reports per-100g for both Branded and Foundation (different from the live API's per-serving Branded shape). The mapper prefers per-100g and falls back to label-nutrients-divided-by-`servingSize` when a per-100g value is missing.
+
+**FoodItem id format.** Mirror rows produce `id="USDA_${fdcId}"` — identical to the live USDA mapper — so dedup-by-`FoodItem.id` against live USDA results is correct.
+
+**Public domain.** FDC data is US public domain. No `/credits` attribution required.
 
 ---
 
@@ -350,6 +379,9 @@ data class AppConfig(
 | **OFF Mirror** | | | |
 | `OFF_MIRROR_READ_ENABLED` | no | `true` in prod, `false` in dev | API consults `off_food` before the live OFF/USDA fallback |
 | `OFF_MIRROR_WRITE_ENABLED` | no | `true` in prod, `false` in dev | Ingest Job persists rows; `false` forces dry-run mode |
+| **USDA Mirror** | | | |
+| `USDA_MIRROR_READ_ENABLED` | no | `true` in prod, `false` in dev | API consults `usda_food` after the OFF mirror miss |
+| `USDA_MIRROR_WRITE_ENABLED` | no | `true` in prod, `false` in dev | USDA ingest Job persists rows; `false` forces dry-run mode |
 
 ¹ At least one of `SUPABASE_PUBLISHABLE_KEY` or the env-appropriate legacy anon key must be set.
 
@@ -417,8 +449,10 @@ When tests are explicitly requested, follow the existing style:
 ./gradlew jib -Pprod             # push to GCR (prod: gcr.io/fitzenio/fitzenia-api-prod)
 ./deploy-dev.sh                  # deploy staging  (project fitzenio-debug, service fitzenio-api-dev)
 ./deploy.sh                      # deploy prod     (project fitzenio,       service fitzenio-api-prod)
-./gradlew jib -Pprod -PtargetService=ingest   # build OFF mirror ingest image (prod only)
+./gradlew jib -Pprod -PtargetService=ingest        # build OFF mirror ingest image (prod only)
 ./deploy-ingest.sh               # deploy off-ingest Cloud Run Job (prod only) — see DEPLOY.md
+./gradlew jib -Pprod -PtargetService=usda-ingest   # build USDA mirror ingest image (prod only)
+./deploy-usda-ingest.sh          # deploy usda-ingest Cloud Run Job (prod only) — see DEPLOY.md
 ```
 
 See `DEPLOY.md` for the full deployment guide. Cloud Run configs: `cloud-run-config.yaml` (prod), `cloud-run-config.dev.yaml` (staging). IAM: `grant-secrets.sh`. Local→Secret Manager sync: `sync-secrets.sh`. Diff deployed env vs local: `check-cloud-run-env.sh`.

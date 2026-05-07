@@ -232,21 +232,23 @@ After each run, audit row lands in `public.off_sync_state` with status, counters
 
 ### Cloud Scheduler
 
-Two HTTP triggers, off-peak minutes (avoid OFF's CDN spike at :00):
+Two HTTP triggers, off-peak minutes (avoid OFF's CDN spike at :00).
+
+> **Region note.** Cloud Scheduler does NOT run in `europe-north1`. Use `europe-west1` (or another supported Scheduler region) — it just does an HTTP POST to the Job URI, so the Scheduler region and the Job region are independent. The URI host stays `europe-north1-run.googleapis.com`.
 
 ```bash
 SA="<cloud-run-invoker-service-account>@fitzenio.iam.gserviceaccount.com"
 JOB_URI="https://europe-north1-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/fitzenio/jobs/off-ingest:run"
 
 gcloud scheduler jobs create http off-delta-daily \
-  --project=fitzenio --location=europe-north1 \
+  --project=fitzenio --location=europe-west1 \
   --schedule="7 3 * * *" --time-zone=UTC \
   --uri="$JOB_URI" --http-method=POST \
   --oauth-service-account-email="$SA" \
   --message-body='{"overrides":{"containerOverrides":[{"args":["--kind=delta"]}]}}'
 
 gcloud scheduler jobs create http off-full-weekly \
-  --project=fitzenio --location=europe-north1 \
+  --project=fitzenio --location=europe-west1 \
   --schedule="13 4 * * 0" --time-zone=UTC \
   --uri="$JOB_URI" --http-method=POST \
   --oauth-service-account-email="$SA" \
@@ -287,6 +289,100 @@ The two jobs serialize via the `off_sync_state` RUNNING-row check inside the ing
 - Cause: post-ingest pooler/PostgREST saturation; the tiny PATCH waits behind autovacuum + index maintenance kicked off by the bulk upsert and soft-delete.
 - Mitigations applied: `OffSyncStateGateway.applyLongTimeout()` is 90 s and `finishRun` retries once on timeout. Migration `003_off_mirror_trim.sql` drops four write-only columns (`product_name_localized`, `lc`, `completeness`, `rev`) and two unused indexes (`idx_off_food_modified`, `idx_off_food_brand`) to cut steady-state pressure.
 - If the banner persists after 003 + a clean reconcile: temporarily bump the Supabase compute add-on one tier for the next full run, then drop back. Don't pre-emptively buy compute — the trim alone is usually enough.
+
+---
+
+## USDA Mirror Ingest Job (prod only)
+
+A second Cloud Run Job mirrors the USDA FoodData Central (FDC) **Branded** + **Foundation** datasets into Supabase. FDC ships **bi-annual full snapshots only** (no deltas), so the job is much simpler than the OFF mirror — one `--kind=full` mode, monthly cron, no-op when the release date hasn't changed.
+
+| Setting | Value |
+|---|---|
+| Job name | `usda-ingest` |
+| Image | `gcr.io/fitzenio/fitzenio-usda-ingest` |
+| Region | `europe-north1` |
+| CPU / Memory | 2 vCPU / 2 Gi |
+| Timeout | 14400 s (4 h) |
+| Retries | 0 |
+| Migration | `db/migrations/004_usda_mirror.sql` |
+| Tables | `public.usda_food`, `public.usda_sync_state` |
+
+### Deploy
+
+```bash
+./deploy-usda-ingest.sh
+```
+
+Builds the USDA ingest image with `./gradlew jib -Pprod -PtargetService=usda-ingest`, materializes `cloud-run-job-usda-ingest.yaml`, and `gcloud run jobs replace`s the prod Job.
+
+### Secrets
+
+Same Secret Manager bindings as OFF ingest. `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY` are the only ones the USDA ingest actually uses; the others (`FATSECRET_*`, `USDA_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`) are required because `ConfigLoader.createProductionConfig()` validates them at boot.
+
+`USDA_MIRROR_WRITE_ENABLED=true` and `USDA_MIRROR_READ_ENABLED=true` are pinned in the manifest (defense in depth — env-default change can't silently demote it to dry-run).
+
+### Manual smoke test
+
+```bash
+# Dry-run: connects to FDC index, parses release URLs, streams the first
+# few hundred rows, writes nothing. Inserts a sync_state row with dry_run=true.
+gcloud run jobs execute usda-ingest \
+    --args=--kind=full,--dry-run \
+    --region=europe-north1 \
+    --project=fitzenio --wait
+
+# Real ingest:
+gcloud run jobs execute usda-ingest \
+    --args=--kind=full \
+    --region=europe-north1 \
+    --project=fitzenio --wait
+```
+
+After each run, audit row lands in `public.usda_sync_state` with status, counts, release_date, and (if applicable) error_message:
+
+| status | meaning |
+|---|---|
+| `OK` | Branded + Foundation streamed and upserted; soft-delete pass complete |
+| `NO_NEW_RELEASE` | Same `release_date` as the last `OK` row — no work performed |
+| `FAILED` | Anything thrown out of the job; check `error_message` and Cloud Run logs |
+| `CANCELLED` | Another RUNNING row exists within the 8 h staleness window |
+| `RUNNING` | Job currently executing |
+
+### Cloud Scheduler
+
+One trigger fires monthly. Most months no-op (`NO_NEW_RELEASE`); the April + December runs do the real ~60–90 min reconcile.
+
+```bash
+gcloud scheduler jobs create http usda-mirror-monthly \
+    --schedule="37 4 1 * *" \
+    --time-zone="Etc/UTC" \
+    --uri="https://europe-north1-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/fitzenio/jobs/usda-ingest:run" \
+    --http-method=POST \
+    --message-body='{"overrides":{"containerOverrides":[{"args":["--kind=full"]}]}}' \
+    --oauth-service-account-email="225613129645-compute@developer.gserviceaccount.com" \
+    --location=europe-west1 \
+    --project=fitzenio
+```
+
+> **Region note.** Cloud Scheduler doesn't run in `europe-north1`, so the trigger lives in `europe-west1` (Belgium — closest supported region). The URI host is still `europe-north1-run.googleapis.com` because that's where the Job lives. Scheduler region and Job region are independent — Scheduler just does an HTTP POST.
+
+### Ingest troubleshooting
+
+**`Could not resolve FDC release URLs from index page`**
+- The detector regex matched zero `FoodData_Central_branded_food_json_*.zip` URLs on `https://fdc.nal.usda.gov/download-datasets/`. Either FDC redesigned the page or the page is briefly down.
+- Fix: load the page manually; if the URL pattern changed, update `BRANDED_PATTERN` / `FOUNDATION_PATTERN` in `UsdaReleaseDetector.kt`. If transient, the next monthly cron retries.
+
+**Stale `RUNNING` row in `usda_sync_state` blocking new runs**
+- USDA's window is **8 h** (vs OFF's 6 h) — Branded reconcile is bigger and the timeout cushion is wider.
+- If a run was killed mid-stream by Cloud Run timeout: `UPDATE public.usda_sync_state SET status='CANCELLED', finished_at=now() WHERE status='RUNNING' AND started_at < now() - interval '8 hours';`
+
+**Statement timeout on `upsert_usda_foods`**
+- Same root cause as OFF: Supabase default `statement_timeout` is short for 500-row JSONB upserts.
+- Mitigation already in `UsdaMirrorWriter`: bisects the batch on `57014` and retries recursively. If you see depth>3 frequently in logs, drop `USDA_MIRROR_BATCH_SIZE` from 50 to 25 in the manifest.
+
+**Soft-delete pass deletes too much / too little**
+- Correctness depends on `upsert_usda_foods` always refreshing `synced_at = now()` on conflict. If you ever modify the RPC, re-test that branch.
+- The soft-delete cutoff is captured 60 s before the first upsert (clock-drift cushion). Don't tighten that cushion.
 
 ---
 

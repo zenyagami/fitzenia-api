@@ -28,6 +28,7 @@ import com.zenthek.upstream.gemini.GeminiImageEditClient
 import com.zenthek.upstream.gemini.GeminiProgressGatekeeperClient
 import com.zenthek.upstream.openfoodfacts.OpenFoodFactsClient
 import com.zenthek.upstream.usda.UsdaClient
+import com.zenthek.upstream.usda.UsdaMirrorGateway
 import io.ktor.client.*
 import io.ktor.client.engine.cio.*
 import io.ktor.client.plugins.*
@@ -92,11 +93,27 @@ fun Application.module() {
             serviceRoleKey = config.apiKeys.supabaseServiceRoleKey,
         )
     } else {
-        log.info("OFF mirror read path: disabled (live OFF/USDA only)")
+        log.info("OFF mirror read path: disabled (live fetch OFF only)")
         null
     }
 
-    val foodService = FoodService(offClient, usdaClient, offMirrorGateway)
+    // USDA mirror — read-side gateway. Constructed only when
+    // USDA_MIRROR_READ_ENABLED is on (production by default). When non-null,
+    // FoodService consults it after the OFF mirror miss; SmartSearch hits it
+    // in phase-1 mirror fan-out alongside OFF mirror.
+    val usdaMirrorGateway: UsdaMirrorGateway? = if (config.usdaMirror.readEnabled) {
+        log.info("USDA database mirror read path: enabled (usda_food → live FDC fallback)")
+        UsdaMirrorGateway(
+            httpClient = httpClient,
+            config = config.supabase,
+            serviceRoleKey = config.apiKeys.supabaseServiceRoleKey,
+        )
+    } else {
+        log.info("USDA mirror read path: disabled (live fetch FDC only)")
+        null
+    }
+
+    val foodService = FoodService(offClient, usdaClient, offMirrorGateway, usdaMirrorGateway)
     val supabaseClient = SupabaseClient(httpClient, config.supabase)
     val userProfileService = UserProfileService(supabaseClient)
 
@@ -140,6 +157,7 @@ fun Application.module() {
         config = config.smartSearch,
         backgroundScope = smartSearchBackgroundScope,
         offMirror = offMirrorGateway,
+        usdaMirror = usdaMirrorGateway,
     )
 
     // AI Progress Projections — bytes-in ladder generator + delete endpoint.

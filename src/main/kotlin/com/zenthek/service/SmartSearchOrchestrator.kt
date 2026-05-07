@@ -24,8 +24,10 @@ import com.zenthek.model.ServingSize
 import com.zenthek.model.SmartSearchResponse
 import com.zenthek.model.UpstreamSearchPage
 import com.zenthek.mapper.OpenFoodFactsMapper
+import com.zenthek.mapper.UsdaMapper
 import com.zenthek.upstream.supabase.CanonicalCatalogGateway
 import com.zenthek.upstream.supabase.OffMirrorGateway
+import com.zenthek.upstream.usda.UsdaMirrorGateway
 import com.zenthek.model.SearchStreamBestMatch
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.TimeoutCancellationException
@@ -90,13 +92,18 @@ class SmartSearchOrchestrator internal constructor(
     private val backgroundScope: CoroutineScope,
     /**
      * Local OFF mirror gateway. Non-null in production (when
-     * `OFF_MIRROR_READ_ENABLED=true`), null in development. When non-null,
-     * mirror candidates are fanned out in parallel with live OFF + USDA and
-     * dedup-merged before classification — duplicates by `FoodItem.id` keep
-     * the mirror hit (cheaper, identical payload). Null skips the mirror branch
-     * entirely.
+     * `OFF_MIRROR_READ_ENABLED=true`), null in development. Phase-1 mirror
+     * fan-out queries this in parallel with [usdaMirror]. Null skips the OFF
+     * mirror branch entirely.
      */
     private val offMirror: OffMirrorGateway? = null,
+    /**
+     * Local USDA mirror gateway. Non-null in production (when
+     * `USDA_MIRROR_READ_ENABLED=true`), null in development. Phase-1 mirror
+     * fan-out queries this in parallel with [offMirror]. US-only data — no
+     * country filter. Null skips the USDA mirror branch entirely.
+     */
+    private val usdaMirror: UsdaMirrorGateway? = null,
 ) {
     private val log = LoggerFactory.getLogger(SmartSearchOrchestrator::class.java)
 
@@ -437,12 +444,37 @@ class SmartSearchOrchestrator internal constructor(
     // Upstream fan-out
     // -----------------------------------------------------------------------
 
+    /**
+     * Two-phase upstream fan-out for page 0. Phase 1 fires both mirrors in
+     * parallel; if the merged result has at least [MIN_MIRROR_RESULTS_FOR_LIVE_SKIP]
+     * items, we short-circuit and skip the live tier entirely (saves ~500ms+
+     * vs the all-parallel pre-USDA-mirror shape). Otherwise Phase 2 fans out
+     * to live OFF + USDA (gated by country/config) and merges.
+     *
+     * Dedup priority via list-order: OFF mirror → USDA mirror → live OFF →
+     * live USDA. Mirror rows win when ids collide (cheaper, identical payload).
+     */
     private suspend fun fanOutUpstream(
         normalizedQuery: String,
         country: String,
         pageSize: Int,
         locale: String?
     ): UpstreamSearchPage = coroutineScope {
+        // Phase 1: mirrors in parallel.
+        val offMirrorDeferred = async { fetchOffMirrorCandidates(normalizedQuery, country, pageSize) }
+        val usdaMirrorDeferred = async { fetchUsdaMirrorCandidates(normalizedQuery, pageSize) }
+        val offMirrorHits = offMirrorDeferred.await()
+        val usdaMirrorHits = usdaMirrorDeferred.await()
+        val mirrorMerged = dedupById(offMirrorHits + usdaMirrorHits)
+        if (mirrorMerged.size >= MIN_MIRROR_RESULTS_FOR_LIVE_SKIP) {
+            log.debug(
+                "[SMART] phase1 mirror short-circuit query={} mirrorHits={}",
+                normalizedQuery, mirrorMerged.size,
+            )
+            return@coroutineScope UpstreamSearchPage(items = mirrorMerged, hasMore = false)
+        }
+
+        // Phase 2: live fan-out only when phase 1 was sparse/empty.
         val offDeferred = async {
             runCatching { offSearch(normalizedQuery, 0, pageSize, locale, country) }
                 .onFailure { log.warn("[SMART] OFF search failed: {}", it.message) }
@@ -457,25 +489,21 @@ class SmartSearchOrchestrator internal constructor(
                 UpstreamSearchPage.EMPTY
             }
         }
-        val mirrorDeferred = async { fetchMirrorCandidates(normalizedQuery, country, pageSize) }
         val off = offDeferred.await()
         val usda = usdaDeferred.await()
-        val mirror = mirrorDeferred.await()
-        // Mirror first so dedup (by FoodItem.id) prefers mirror rows over the
-        // identical live OFF rows. USDA never overlaps by id (different prefix).
         UpstreamSearchPage(
-            items = dedupById(mirror + off.items + usda.items),
+            items = dedupById(mirrorMerged + off.items + usda.items),
             hasMore = off.hasMore || usda.hasMore,
         )
     }
 
     /**
-     * Local mirror candidate recall. Returns empty when [offMirror] is null
-     * (dev) or the gateway errors — never breaks the overall fan-out.
-     * `ResultKind` matches the live-OFF mapper's classification so the
-     * orchestrator's GENERIC/BRANDED bucketing applies uniformly.
+     * Local OFF mirror candidate recall. Returns empty when [offMirror] is
+     * null (dev) or the gateway errors — never breaks the overall fan-out.
+     * Mirror reflects OFF (branded-products db). Promotion to GENERIC happens
+     * in the orchestrator via `promoteExactMatchesToGeneric`.
      */
-    private suspend fun fetchMirrorCandidates(
+    private suspend fun fetchOffMirrorCandidates(
         normalizedQuery: String,
         country: String,
         pageSize: Int,
@@ -483,14 +511,29 @@ class SmartSearchOrchestrator internal constructor(
         val gateway = offMirror ?: return emptyList()
         val rawCountry = country.takeIf { it != "GLOBAL" }
         val rows = runCatching { gateway.candidatesFor(normalizedQuery, rawCountry, pageSize).getOrThrow() }
-            .onFailure { log.warn("[SMART] mirror candidatesFor failed: {}", it.message) }
+            .onFailure { log.warn("[SMART] off mirror candidatesFor failed: {}", it.message) }
             .getOrDefault(emptyList())
         return rows.mapNotNull { row ->
             val item = OpenFoodFactsMapper.mapMirrorRow(row) ?: return@mapNotNull null
-            // Mirror reflects OFF, which is a branded-products db. Promotion to
-            // GENERIC happens in the orchestrator via `promoteExactMatchesToGeneric`.
             InternalFoodItem(item, ResultKind.BRANDED)
         }
+    }
+
+    /**
+     * Local USDA mirror candidate recall. Returns empty when [usdaMirror] is
+     * null (dev) or the gateway errors. ResultKind classification matches
+     * `UsdaMapper.mapSearchItemWithKind`: foundation_food → GENERIC,
+     * branded_food → BRANDED. No country filter — FDC is US-only.
+     */
+    private suspend fun fetchUsdaMirrorCandidates(
+        normalizedQuery: String,
+        pageSize: Int,
+    ): List<InternalFoodItem> {
+        val gateway = usdaMirror ?: return emptyList()
+        val rows = runCatching { gateway.candidatesFor(normalizedQuery, pageSize).getOrThrow() }
+            .onFailure { log.warn("[SMART] usda mirror candidatesFor failed: {}", it.message) }
+            .getOrDefault(emptyList())
+        return rows.mapNotNull { row -> UsdaMapper.mapMirrorRowWithKind(row) }
     }
 
     /** Dedups by `FoodItem.id`, keeping the first occurrence (mirror first → wins). */
@@ -508,28 +551,48 @@ class SmartSearchOrchestrator internal constructor(
         reason: String,
         locale: String?
     ): SmartSearchResponse = coroutineScope {
-        val offDeferred = async {
-            runCatching { offSearch(normalizedQuery, page, pageSize, locale, country) }
-                .getOrDefault(UpstreamSearchPage.EMPTY)
-        }
-        val usdaDeferred = async {
-            if (country == "US" && config.usdaEnabled) {
-                runCatching { usdaSearch(normalizedQuery, page, pageSize, locale, country) }
-                    .getOrDefault(UpstreamSearchPage.EMPTY)
+        // Page 0: same two-phase shape as fanOutUpstream (mirrors first, live
+        // only on miss). Page > 0: upstream-only — mirror RPCs aren't pageable
+        // and pagination behavior stays identical to the pre-mirror code path.
+        val (mirrorMerged, off, usda) = if (page == 0) {
+            val offMirrorDeferred = async { fetchOffMirrorCandidates(normalizedQuery, country, pageSize) }
+            val usdaMirrorDeferred = async { fetchUsdaMirrorCandidates(normalizedQuery, pageSize) }
+            val offMirrorHits = offMirrorDeferred.await()
+            val usdaMirrorHits = usdaMirrorDeferred.await()
+            val merged = dedupById(offMirrorHits + usdaMirrorHits)
+            if (merged.size >= MIN_MIRROR_RESULTS_FOR_LIVE_SKIP) {
+                Triple(merged, UpstreamSearchPage.EMPTY, UpstreamSearchPage.EMPTY)
             } else {
-                UpstreamSearchPage.EMPTY
+                val offDeferred = async {
+                    runCatching { offSearch(normalizedQuery, page, pageSize, locale, country) }
+                        .getOrDefault(UpstreamSearchPage.EMPTY)
+                }
+                val usdaDeferred = async {
+                    if (country == "US" && config.usdaEnabled) {
+                        runCatching { usdaSearch(normalizedQuery, page, pageSize, locale, country) }
+                            .getOrDefault(UpstreamSearchPage.EMPTY)
+                    } else {
+                        UpstreamSearchPage.EMPTY
+                    }
+                }
+                Triple(merged, offDeferred.await(), usdaDeferred.await())
             }
+        } else {
+            val offDeferred = async {
+                runCatching { offSearch(normalizedQuery, page, pageSize, locale, country) }
+                    .getOrDefault(UpstreamSearchPage.EMPTY)
+            }
+            val usdaDeferred = async {
+                if (country == "US" && config.usdaEnabled) {
+                    runCatching { usdaSearch(normalizedQuery, page, pageSize, locale, country) }
+                        .getOrDefault(UpstreamSearchPage.EMPTY)
+                } else {
+                    UpstreamSearchPage.EMPTY
+                }
+            }
+            Triple(emptyList<InternalFoodItem>(), offDeferred.await(), usdaDeferred.await())
         }
-        // Mirror lookup only on page 0 — paginated requests fall back to live
-        // upstream because the mirror RPC isn't pageable yet (would require an
-        // offset arg). page>0 stays exactly as it was before the mirror existed.
-        val mirrorDeferred = async {
-            if (page == 0) fetchMirrorCandidates(normalizedQuery, country, pageSize) else emptyList()
-        }
-        val off = offDeferred.await()
-        val usda = usdaDeferred.await()
-        val mirror = mirrorDeferred.await()
-        val merged = dedupById(mirror + off.items + usda.items)
+        val merged = dedupById(mirrorMerged + off.items + usda.items)
         val generic = merged.filter { it.kind == ResultKind.GENERIC }.map { it.foodItem }
         val branded = merged.filter { it.kind == ResultKind.BRANDED }.map { it.foodItem }
         val hasMore = off.hasMore || usda.hasMore || merged.size >= pageSize
@@ -1057,6 +1120,14 @@ class SmartSearchOrchestrator internal constructor(
 
     private companion object {
         const val UPSTREAM_HITS_FOR_AI = 10
+
+        /**
+         * Minimum mirror-tier hit count to skip live fan-out entirely. Tunable
+         * tradeoff: too low → skip live unnecessarily on rare/regional queries;
+         * too high → never save the latency. Ship at 5; revisit after a week
+         * of prod metrics.
+         */
+        const val MIN_MIRROR_RESULTS_FOR_LIVE_SKIP = 5
 
         // CDN / LB geo-header values that mean "unknown" — Cloudflare uses "XX"; "T1" = Tor.
         // Treat these as absent rather than as country codes.
