@@ -162,7 +162,7 @@ class SmartSearchOrchestrator internal constructor(
 
         // Step 3: catalog hit? re-read canonicals, assemble, return.
         if (!mappings.isNullOrEmpty()) {
-            val assembled = tryAssembleFromCatalog(mappings, locale, upstream, page, pageSize)
+            val assembled = tryAssembleFromCatalog(mappings, normalized, locale, upstream, page, pageSize)
             if (assembled != null) {
                 log.info("[SMART] catalog_hit query={} locale={} country={}", normalized, locale, resolvedCountry)
                 return@coroutineScope assembled
@@ -329,7 +329,7 @@ class SmartSearchOrchestrator internal constructor(
 
         // Catalog hit: emit single upstream event with the canonical, done.
         if (!mappings.isNullOrEmpty()) {
-            val assembled = tryAssembleFromCatalog(mappings, locale, upstream, page, pageSize)
+            val assembled = tryAssembleFromCatalog(mappings, normalized, locale, upstream, page, pageSize)
             if (assembled != null) {
                 log.info("[SMART] stream_catalog_hit query={} locale={} country={}", normalized, locale, resolvedCountry)
                 emit(SearchStreamEvent.Upstream(assembled))
@@ -822,16 +822,24 @@ class SmartSearchOrchestrator internal constructor(
                 val canonicals = runCatching { catalog.readCanonicals(ids).getOrThrow() }
                     .onFailure { log.warn("[SMART] reused_reread_failed query={} msg={}", normalizedQuery, it.message) }
                     .getOrNull().orEmpty()
-                if (canonicals.isEmpty()) {
-                    // Re-read failed; fall back to in-memory generation with persisted IDs.
-                    generated.items.mapIndexed { idx, item ->
+                val reusedItems = ids.mapNotNull { id ->
+                    canonicals.firstOrNull { it.id == id }?.toFoodItem(locale, normalizedQuery)
+                }
+                if (reusedItems.size == ids.size) {
+                    reusedItems
+                } else {
+                    log.warn(
+                        "[SMART] reused_catalog_display_mismatch query={} locale={} country={} fallback=generated",
+                        normalizedQuery,
+                        locale,
+                        country
+                    )
+                    generated.items.map { item ->
                         item.toFoodItem(
-                            canonicalId = persistResult.rankToCanonicalId[idx.toShort()],
+                            canonicalId = null,
                             canonicalGroupId = null
                         )
                     }
-                } else {
-                    ids.mapNotNull { id -> canonicals.firstOrNull { it.id == id }?.toFoodItem(locale) }
                 }
             }
             is CatalogPersistResult.Inserted -> generated.items.mapIndexed { idx, item ->
@@ -926,6 +934,7 @@ class SmartSearchOrchestrator internal constructor(
 
     private suspend fun tryAssembleFromCatalog(
         mappings: List<com.zenthek.model.CanonicalQueryMapRow>,
+        normalizedQuery: String,
         locale: String,
         upstream: UpstreamSearchPage,
         page: Int,
@@ -936,15 +945,16 @@ class SmartSearchOrchestrator internal constructor(
             .onFailure { log.warn("[SMART] catalog read failed: {}", it.message) }
             .getOrNull() ?: return null
 
-        // Read-path invariant: only reuse catalog hits that can be displayed in the requested language.
+        // Read-path invariant: only reuse catalog hits that can be displayed safely for this query/language.
         if (canonicals.size != ids.size) return null
         if (canonicals.any { it.servings.isEmpty() }) return null
-        if (canonicals.any { it.displayNameForLocale(locale) == null }) return null
 
         val rankedItems: List<Pair<Short, FoodItem>> = mappings.mapNotNull { m ->
-            canonicals.firstOrNull { it.id == m.canonicalFoodId }?.toFoodItem(locale)?.let { m.rank to it }
+            canonicals.firstOrNull { it.id == m.canonicalFoodId }
+                ?.toFoodItem(locale, normalizedQuery)
+                ?.let { m.rank to it }
         }.sortedBy { it.first }
-        if (rankedItems.isEmpty()) return null
+        if (rankedItems.size != mappings.size) return null
 
         val bestMatch = rankedItems.first().second
         val candidates = rankedItems.drop(1).map { it.second }
@@ -963,8 +973,12 @@ class SmartSearchOrchestrator internal constructor(
         )
     }
 
-    private fun CanonicalFoodEntity.toFoodItem(targetLocale: String): FoodItem? {
+    private fun CanonicalFoodEntity.toFoodItem(
+        targetLocale: String,
+        normalizedQuery: String? = null
+    ): FoodItem? {
         val name = displayNameForLocale(targetLocale) ?: return null
+        if (!isDisplayNameCompatibleWithQuery(name, targetLocale, normalizedQuery)) return null
         return FoodItem(
             id = "CAT_$id",
             name = name,
@@ -988,6 +1002,19 @@ class SmartSearchOrchestrator internal constructor(
             ?: terms.firstDisplayName {
                 sameLocale(it.locale, primaryLocale) && localeLanguage(primaryLocale) == targetLanguage
             }
+    }
+
+    private fun isDisplayNameCompatibleWithQuery(
+        displayName: String,
+        targetLocale: String,
+        normalizedQuery: String?
+    ): Boolean {
+        val targetLanguage = localeLanguage(targetLocale) ?: DEFAULT_CATALOG_LANGUAGE
+        if (targetLanguage != DEFAULT_CATALOG_LANGUAGE) return true
+        val query = normalizedQuery?.takeIf { it.isNotBlank() } ?: return true
+        val normalizedName = QueryNormalizer.normalize(displayName)
+        return QueryNormalizer.containsAsWholeTokens(displayName, query) ||
+            QueryNormalizer.containsAsWholeTokens(query, normalizedName)
     }
 
     private fun List<CanonicalTermEntity>.firstDisplayName(

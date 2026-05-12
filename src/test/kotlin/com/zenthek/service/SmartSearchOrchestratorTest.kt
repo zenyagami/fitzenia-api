@@ -146,6 +146,77 @@ class SmartSearchOrchestratorTest {
     }
 
     @Test
+    fun `english locale in Germany rejects exact-locale catalog hit with incompatible name`() = runBlocking {
+        val ai = FakeAi(
+            classifyResult = AiClassifyResult(ClassifyDecision.NEED_CREATE_SPECIFIC, emptyList(), 0.9f),
+            generateResult = AiGenerateResult(
+                items = listOf(generatedItem(name = "Coffee", confidence = 0.9f))
+            )
+        )
+        val catalog = FakeCatalog(
+            mappings = mapOf(
+                QueryKey("coffee", "en-DE", "DE") to listOf(CanonicalQueryMapRow("cat-bad", 0))
+            ),
+            reads = mapOf(
+                "cat-bad" to canonicalEntity("cat-bad", nameByLocale = mapOf("en-DE" to "Kaffee"))
+            ),
+            insertResult = InsertCanonicalFoodsResult(
+                rankToCanonicalFoodId = mapOf("0" to "cat-en"),
+                status = InsertCanonicalFoodsResult.STATUS_INSERTED
+            )
+        )
+        val orchestrator = buildOrchestrator(
+            off = { _, _, _, _, _ -> UpstreamSearchPage.EMPTY },
+            usda = { _, _, _, _, _ -> UpstreamSearchPage.EMPTY },
+            ai = ai,
+            catalog = catalog
+        )
+
+        val response = orchestrator.search("coffee", "en-DE", "DE", page = 0, pageSize = 10)
+
+        assertNotNull(response.bestMatch)
+        assertEquals("Coffee", response.bestMatch!!.name)
+        assertEquals(1, ai.classifyCalls)
+        assertEquals(1, ai.generateCalls)
+    }
+
+    @Test
+    fun `reused incompatible catalog mapping falls back to generated item`() = runBlocking {
+        val ai = FakeAi(
+            classifyResult = AiClassifyResult(ClassifyDecision.NEED_CREATE_SPECIFIC, emptyList(), 0.9f),
+            generateResult = AiGenerateResult(
+                items = listOf(generatedItem(name = "Coffee", confidence = 0.9f))
+            )
+        )
+        val catalog = FakeCatalog(
+            mappings = mapOf(
+                QueryKey("coffee", "en-DE", "DE") to listOf(CanonicalQueryMapRow("cat-bad", 0))
+            ),
+            reads = mapOf(
+                "cat-bad" to canonicalEntity("cat-bad", nameByLocale = mapOf("en-DE" to "Kaffee"))
+            ),
+            insertResult = InsertCanonicalFoodsResult(
+                rankToCanonicalFoodId = mapOf("0" to "cat-bad"),
+                status = InsertCanonicalFoodsResult.STATUS_REUSED
+            )
+        )
+        val orchestrator = buildOrchestrator(
+            off = { _, _, _, _, _ -> UpstreamSearchPage.EMPTY },
+            usda = { _, _, _, _, _ -> UpstreamSearchPage.EMPTY },
+            ai = ai,
+            catalog = catalog
+        )
+
+        val response = orchestrator.search("coffee", "en-DE", "DE", page = 0, pageSize = 10)
+
+        assertNotNull(response.bestMatch)
+        assertEquals("Coffee", response.bestMatch!!.name)
+        assertTrue(response.bestMatch!!.id.startsWith("CAT_ephemeral_"))
+        assertEquals(1, ai.classifyCalls)
+        assertEquals(1, ai.generateCalls)
+    }
+
+    @Test
     fun `english locale in Germany can reuse same-language catalog hit from another region`() = runBlocking {
         val ai = FakeAi()
         val catalog = FakeCatalog(
