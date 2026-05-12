@@ -10,6 +10,7 @@ import com.zenthek.ai.UpstreamHitSummary
 import com.zenthek.config.SmartSearchConfig
 import com.zenthek.model.CanonicalFoodEntity
 import com.zenthek.model.CanonicalServingEntity
+import com.zenthek.model.CanonicalTermEntity
 import com.zenthek.model.FoodItem
 import com.zenthek.model.FoodSource
 import com.zenthek.model.InsertCanonicalFood
@@ -935,10 +936,10 @@ class SmartSearchOrchestrator internal constructor(
             .onFailure { log.warn("[SMART] catalog read failed: {}", it.message) }
             .getOrNull() ?: return null
 
-        // Read-path partial invariant: if some mapped canonicals are missing, or servings/terms are empty, bail.
+        // Read-path invariant: only reuse catalog hits that can be displayed in the requested language.
         if (canonicals.size != ids.size) return null
         if (canonicals.any { it.servings.isEmpty() }) return null
-        if (canonicals.any { ent -> ent.terms.none { it.locale == locale } && ent.terms.none { it.locale == ent.primaryLocale } }) return null
+        if (canonicals.any { it.displayNameForLocale(locale) == null }) return null
 
         val rankedItems: List<Pair<Short, FoodItem>> = mappings.mapNotNull { m ->
             canonicals.firstOrNull { it.id == m.canonicalFoodId }?.toFoodItem(locale)?.let { m.rank to it }
@@ -962,12 +963,8 @@ class SmartSearchOrchestrator internal constructor(
         )
     }
 
-    private fun CanonicalFoodEntity.toFoodItem(targetLocale: String): FoodItem {
-        val name = terms.firstOrNull { it.locale == targetLocale && !it.isAlias }?.name
-            ?: terms.firstOrNull { it.locale == primaryLocale && !it.isAlias }?.name
-            ?: terms.firstOrNull { !it.isAlias }?.name
-            ?: terms.firstOrNull()?.name
-            ?: "Unknown"
+    private fun CanonicalFoodEntity.toFoodItem(targetLocale: String): FoodItem? {
+        val name = displayNameForLocale(targetLocale) ?: return null
         return FoodItem(
             id = "CAT_$id",
             name = name,
@@ -981,6 +978,31 @@ class SmartSearchOrchestrator internal constructor(
             canonicalGroupId = canonicalGroupId
         )
     }
+
+    private fun CanonicalFoodEntity.displayNameForLocale(targetLocale: String): String? {
+        val targetLanguage = localeLanguage(targetLocale) ?: DEFAULT_CATALOG_LANGUAGE
+        return terms.firstDisplayName { sameLocale(it.locale, targetLocale) }
+            ?: terms.firstDisplayName {
+                !sameLocale(it.locale, primaryLocale) && localeLanguage(it.locale) == targetLanguage
+            }
+            ?: terms.firstDisplayName {
+                sameLocale(it.locale, primaryLocale) && localeLanguage(primaryLocale) == targetLanguage
+            }
+    }
+
+    private fun List<CanonicalTermEntity>.firstDisplayName(
+        predicate: (CanonicalTermEntity) -> Boolean
+    ): String? = firstOrNull { !it.isAlias && predicate(it) }?.name
+
+    private fun sameLocale(left: String, right: String): Boolean =
+        left.equals(right, ignoreCase = true)
+
+    private fun localeLanguage(locale: String): String? =
+        locale.trim()
+            .split('-', '_')
+            .firstOrNull()
+            ?.lowercase()
+            ?.takeIf { it.isNotBlank() && it.all(Char::isLetter) }
 
     // Labeled household serving (e.g. "1 piece", "1 cup") sorts before "100g".
     // 100g is a reference unit, not the user-facing default — anything that is NOT
@@ -1132,5 +1154,7 @@ class SmartSearchOrchestrator internal constructor(
         // CDN / LB geo-header values that mean "unknown" — Cloudflare uses "XX"; "T1" = Tor.
         // Treat these as absent rather than as country codes.
         val CDN_UNKNOWN_COUNTRY_SENTINELS = setOf("XX", "T1", "ZZ")
+
+        const val DEFAULT_CATALOG_LANGUAGE = "en"
     }
 }

@@ -110,6 +110,119 @@ class SmartSearchOrchestratorTest {
         assertEquals(1, response.brandedMatches.size)
     }
 
+    @Test
+    fun `english locale in Germany does not return german-only catalog hit`() = runBlocking {
+        val ai = FakeAi(
+            classifyResult = AiClassifyResult(ClassifyDecision.NEED_CREATE_SPECIFIC, emptyList(), 0.9f),
+            generateResult = AiGenerateResult(
+                items = listOf(generatedItem(name = "Coffee", confidence = 0.9f))
+            )
+        )
+        val catalog = FakeCatalog(
+            mappings = mapOf(
+                QueryKey("coffee", "en-DE", "DE") to listOf(CanonicalQueryMapRow("cat-de", 0))
+            ),
+            reads = mapOf(
+                "cat-de" to canonicalEntity("cat-de", nameByLocale = mapOf("de-DE" to "Kaffee"))
+            ),
+            insertResult = InsertCanonicalFoodsResult(
+                rankToCanonicalFoodId = mapOf("0" to "cat-en"),
+                status = InsertCanonicalFoodsResult.STATUS_INSERTED
+            )
+        )
+        val orchestrator = buildOrchestrator(
+            off = { _, _, _, _, _ -> UpstreamSearchPage.EMPTY },
+            usda = { _, _, _, _, _ -> UpstreamSearchPage.EMPTY },
+            ai = ai,
+            catalog = catalog
+        )
+
+        val response = orchestrator.search("coffee", "en-DE", "DE", page = 0, pageSize = 10)
+
+        assertNotNull(response.bestMatch)
+        assertEquals("Coffee", response.bestMatch!!.name)
+        assertEquals(1, ai.classifyCalls)
+        assertEquals(1, ai.generateCalls)
+    }
+
+    @Test
+    fun `english locale in Germany can reuse same-language catalog hit from another region`() = runBlocking {
+        val ai = FakeAi()
+        val catalog = FakeCatalog(
+            mappings = mapOf(
+                QueryKey("coffee", "en-DE", "DE") to listOf(CanonicalQueryMapRow("cat-en", 0))
+            ),
+            reads = mapOf(
+                "cat-en" to canonicalEntity("cat-en", nameByLocale = mapOf("en-US" to "Coffee"))
+            )
+        )
+        val orchestrator = buildOrchestrator(
+            off = { _, _, _, _, _ -> UpstreamSearchPage.EMPTY },
+            usda = { _, _, _, _, _ -> UpstreamSearchPage.EMPTY },
+            ai = ai,
+            catalog = catalog
+        )
+
+        val response = orchestrator.search("coffee", "en-DE", "DE", page = 0, pageSize = 10)
+
+        assertNotNull(response.bestMatch)
+        assertEquals("Coffee", response.bestMatch!!.name)
+        assertEquals(0, ai.classifyCalls)
+        assertEquals(0, ai.generateCalls)
+    }
+
+    @Test
+    fun `german locale in Germany can return german catalog hit`() = runBlocking {
+        val ai = FakeAi()
+        val catalog = FakeCatalog(
+            mappings = mapOf(
+                QueryKey("kaffee", "de-DE", "DE") to listOf(CanonicalQueryMapRow("cat-de", 0))
+            ),
+            reads = mapOf(
+                "cat-de" to canonicalEntity("cat-de", nameByLocale = mapOf("de-DE" to "Kaffee"))
+            )
+        )
+        val orchestrator = buildOrchestrator(
+            off = { _, _, _, _, _ -> UpstreamSearchPage.EMPTY },
+            usda = { _, _, _, _, _ -> UpstreamSearchPage.EMPTY },
+            ai = ai,
+            catalog = catalog
+        )
+
+        val response = orchestrator.search("kaffee", "de-DE", "DE", page = 0, pageSize = 10)
+
+        assertNotNull(response.bestMatch)
+        assertEquals("Kaffee", response.bestMatch!!.name)
+        assertEquals(0, ai.classifyCalls)
+        assertEquals(0, ai.generateCalls)
+    }
+
+    @Test
+    fun `malformed locale falls back to english catalog display language`() = runBlocking {
+        val ai = FakeAi()
+        val catalog = FakeCatalog(
+            mappings = mapOf(
+                QueryKey("coffee", "123-DE", "DE") to listOf(CanonicalQueryMapRow("cat-en", 0))
+            ),
+            reads = mapOf(
+                "cat-en" to canonicalEntity("cat-en", nameByLocale = mapOf("en-US" to "Coffee"))
+            )
+        )
+        val orchestrator = buildOrchestrator(
+            off = { _, _, _, _, _ -> UpstreamSearchPage.EMPTY },
+            usda = { _, _, _, _, _ -> UpstreamSearchPage.EMPTY },
+            ai = ai,
+            catalog = catalog
+        )
+
+        val response = orchestrator.search("coffee", "123-DE", "DE", page = 0, pageSize = 10)
+
+        assertNotNull(response.bestMatch)
+        assertEquals("Coffee", response.bestMatch!!.name)
+        assertEquals(0, ai.classifyCalls)
+        assertEquals(0, ai.generateCalls)
+    }
+
     // -----------------------------------------------------------------------
     // Heuristic accept: exactly one generic match, no AI
     // -----------------------------------------------------------------------
