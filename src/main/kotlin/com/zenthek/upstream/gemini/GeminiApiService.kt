@@ -22,7 +22,7 @@ enum class GeminiThinkingBudget(val tokens: Int) {
     HIGH(24576)
 }
 
-private const val GEMINI_MODEL = "gemini-3.1-flash-lite-preview"
+private const val GEMINI_MODEL = "gemini-3.1-flash-lite"
 private const val CACHE_TTL_SECONDS = 3600L // 1 hour
 private val json = Json { ignoreUnknownKeys = true }
 

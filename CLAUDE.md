@@ -200,7 +200,7 @@ Adding a route to an existing bucket: drop it into the matching `rateLimit(...) 
 
 | Backend | Class | Model | Timeout | Notes |
 |---|---|---|---|---|
-| Gemini (primary) | `GeminiApiService` | `gemini-3.1-flash-lite-preview` | 90s | Context cache (1h TTL, Mutex-protected, refreshed 1 min before expiry); `thinkingBudget = MEDIUM (8192)`; `responseJsonSchema` enforced |
+| Gemini (primary) | `GeminiApiService` | `gemini-3.1-flash-lite` | 90s | Context cache (1h TTL, Mutex-protected, refreshed 1 min before expiry); `thinkingBudget = MEDIUM (8192)`; `responseJsonSchema` enforced |
 | OpenAI (fallback) | `OpenAiApiService` | `gpt-5-mini` via Responses API | 120s | `reasoning.effort = "low"`; `store = false` |
 
 Selection: `config.useGeminiForAiImage` (env `USE_GEMINI`, default `true`).
