@@ -1,6 +1,25 @@
 package com.zenthek.model
 
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.builtins.nullable
+import kotlinx.serialization.builtins.serializer
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.JsonTransformingSerializer
+import kotlinx.serialization.json.double
+import kotlinx.serialization.json.jsonPrimitive
+import kotlin.math.roundToInt
+
+private object RoundedIntSerializer : JsonTransformingSerializer<Int>(Int.serializer()) {
+    override fun transformDeserialize(element: JsonElement) =
+        JsonPrimitive(element.jsonPrimitive.double.roundToInt())
+}
+
+private object NullableRoundedIntSerializer : JsonTransformingSerializer<Int?>(Int.serializer().nullable) {
+    override fun transformDeserialize(element: JsonElement): JsonElement =
+        if (element is JsonNull) JsonNull else JsonPrimitive(element.jsonPrimitive.double.roundToInt())
+}
 
 @Serializable
 enum class FoodSource {
@@ -119,12 +138,12 @@ data class ImageAnalysisItem(
     val weightG: Double,             // TOTAL grams for the whole detected portion
     val confidence: String,
     // Per-ONE-servingUnit nutrition:
-    val calories: Int,
+    @Serializable(with = RoundedIntSerializer::class) val calories: Int,
     val proteinG: Double,
     val carbsG: Double,
     val fatG: Double,
     val fiberG: Double?,
-    val sodiumMg: Int? = null
+    @Serializable(with = NullableRoundedIntSerializer::class) val sodiumMg: Int? = null
 )
 
 @Serializable
@@ -134,12 +153,12 @@ data class ImageAnalysisResponse(
     val subtitle: String? = null,
     val isLikelyRestaurant: Boolean = false,
     val items: List<ImageAnalysisItem>,
-    val totalCalories: Int,
+    @Serializable(with = RoundedIntSerializer::class) val totalCalories: Int,
     val totalProteinG: Double,
     val totalCarbsG: Double,
     val totalFatG: Double,
     val totalFiberG: Double?,
-    val totalSodiumMg: Int? = null,
+    @Serializable(with = NullableRoundedIntSerializer::class) val totalSodiumMg: Int? = null,
     val notes: String? = null
 )
 
