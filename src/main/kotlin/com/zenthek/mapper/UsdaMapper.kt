@@ -36,7 +36,8 @@ object UsdaMapper {
         if (name.isBlank()) return null
 
         val nutritionPer100g = NutritionInfo(
-            caloriesKcal = row.energyKcal100g ?: 0f,
+            caloriesKcal = row.energyKcal100g
+                ?: estimateCaloriesKcal(row.protein100g, row.carbs100g, row.fat100g),
             proteinG = row.protein100g ?: 0f,
             carbsG = row.carbs100g ?: 0f,
             fatG = row.fat100g ?: 0f,
@@ -87,6 +88,11 @@ object UsdaMapper {
         }
         return InternalFoodItem(item, kind)
     }
+
+    // Atwater factors: 4 kcal/g protein, 4 kcal/g carbs, 9 kcal/g fat.
+    // Used when the source omits an explicit energy value (e.g. FDC foundation foods).
+    private fun estimateCaloriesKcal(protein: Float?, carbs: Float?, fat: Float?): Float =
+        4f * (protein ?: 0f) + 4f * (carbs ?: 0f) + 9f * (fat ?: 0f)
 
     private fun JsonObject.numericField(nutrientId: Int): Float? {
         val key = nutrientId.toString()

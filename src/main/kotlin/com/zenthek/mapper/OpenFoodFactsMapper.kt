@@ -28,7 +28,8 @@ object OpenFoodFactsMapper {
         if (name.isNullOrBlank()) return null
 
         val nutritionPer100g = NutritionInfo(
-            caloriesKcal = row.energyKcal100g ?: 0f,
+            caloriesKcal = row.energyKcal100g
+                ?: estimateCaloriesKcal(row.protein100g, row.carbs100g, row.fat100g),
             proteinG = row.protein100g ?: 0f,
             carbsG = row.carbs100g ?: 0f,
             fatG = row.fat100g ?: 0f,
@@ -121,6 +122,11 @@ object OpenFoodFactsMapper {
         val foodItem = mapV3Search(product) ?: return null
         return InternalFoodItem(foodItem, ResultKind.BRANDED)
     }
+
+    // Atwater factors: 4 kcal/g protein, 4 kcal/g carbs, 9 kcal/g fat.
+    // Used when the source omits an explicit energy value.
+    private fun estimateCaloriesKcal(protein: Float?, carbs: Float?, fat: Float?): Float =
+        4f * (protein ?: 0f) + 4f * (carbs ?: 0f) + 9f * (fat ?: 0f)
 
     private fun extractNutrition(nutriments: OpenFoodFactsNutriments?): NutritionInfo {
         // OFF reports minerals per 100g as grams; convert to mg.
