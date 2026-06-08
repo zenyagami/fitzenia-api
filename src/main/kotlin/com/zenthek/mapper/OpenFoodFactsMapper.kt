@@ -24,7 +24,9 @@ object OpenFoodFactsMapper {
      * apply so a corrupt mirror row never leaks an empty card to the client.
      */
     fun mapMirrorRow(row: OffMirrorProduct): FoodItem? {
-        val name = row.productName?.trim()
+        val brand = row.primaryBrand?.trim()?.ifBlank { null }
+            ?: row.brands?.firstOrNull()?.trim()?.ifBlank { null }
+        val name = row.productName?.trim()?.ifBlank { null } ?: brand
         if (name.isNullOrBlank()) return null
 
         val nutritionPer100g = NutritionInfo(
@@ -46,8 +48,6 @@ object OpenFoodFactsMapper {
             return null
         }
 
-        val brand = row.primaryBrand?.trim()?.ifBlank { null }
-            ?: row.brands?.firstOrNull()?.trim()?.ifBlank { null }
         val servings = buildServings(row.servingSize, row.servingQuantity, nutritionPer100g)
 
         return FoodItem(
@@ -62,7 +62,8 @@ object OpenFoodFactsMapper {
     }
 
     fun map(product: OpenFoodFactsProduct): FoodItem? {
-        val name = product.productName?.trim()
+        val brand = product.brands?.split(",")?.firstOrNull()?.trim()?.ifBlank { null }
+        val name = product.productName?.trim()?.ifBlank { null } ?: brand
         if (name.isNullOrBlank()) return null
 
         val nutritionPer100g = extractNutrition(product.nutriments)
@@ -72,7 +73,6 @@ object OpenFoodFactsMapper {
         }
 
         val code = product.code ?: return null
-        val brand = product.brands?.split(",")?.firstOrNull()?.trim()?.ifBlank { null }
         val servings = buildServings(product.servingSize, product.servingQuantity, nutritionPer100g)
 
         return FoodItem(
@@ -87,7 +87,8 @@ object OpenFoodFactsMapper {
     }
 
     fun mapV3Search(product: OpenFoodFactsV3SearchProduct): FoodItem? {
-        val name = product.productName?.trim()
+        val brand = product.brands?.firstOrNull()?.trim()?.ifBlank { null }
+        val name = product.productName?.trim()?.ifBlank { null } ?: brand
         if (name.isNullOrBlank()) return null
 
         val nutritionPer100g = extractNutrition(product.nutriments)
@@ -97,7 +98,6 @@ object OpenFoodFactsMapper {
         }
 
         val code = product.code ?: return null
-        val brand = product.brands?.firstOrNull()?.trim()?.ifBlank { null }
         val servings = buildServings(product.servingSize, product.servingQuantity, nutritionPer100g)
 
         return FoodItem(
