@@ -158,6 +158,7 @@ class GeminiAiSearchClient(
 
             Rules:
             - Synthesize a CANONICAL (unbranded, typical-preparation) version of this food. Do NOT copy a specific brand.
+            - Compound food names MUST be preserved in full. If the query contains multiple meaningful terms (e.g. "mango matcha", "chocolate hazelnut", "strawberry cheesecake"), the canonical name MUST include ALL key terms. Never drop a qualifier, flavor, or ingredient modifier — "Mango Matcha" is NOT the same canonical as "Mango".
             - Ground macros against the upstream hits. If hits disagree by more than 30%, lower the confidence.
             - MUST include a serving named "100g" with weight_grams=100. "100g" is always required, but it is NOT the default — list it LAST in the servings array.
             - Serving ORDER rule (IMPORTANT): the FIRST serving in the array is the user-facing default. It must be the most natural household unit a person would actually use to log this food. "100g" is a foundational reference and MUST be present, but goes at the END unless the food is genuinely sold and measured only by weight.

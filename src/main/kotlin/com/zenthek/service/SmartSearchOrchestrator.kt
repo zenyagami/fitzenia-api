@@ -800,14 +800,31 @@ class SmartSearchOrchestrator internal constructor(
             )
         }
 
-        val persistResult: CatalogPersistResult = if (validItems.isNotEmpty() &&
-            validItems.all { it.confidence >= config.catalogWriteConfidenceThreshold }
+        // Name coverage guard: for compound specific queries (≥2 significant tokens), prevent
+        // a single-ingredient canonical (e.g. "Mango") from being stored for a compound query
+        // (e.g. "mango matcha"). Items that fail are still shown to the user via generated.items
+        // (Skipped path) but are NOT written to the catalog.
+        val significantTokens = if (!broad) normalizedQuery.split(" ").filter { it.length > 3 } else emptyList()
+        val itemsToPersist = if (significantTokens.size >= 2) {
+            validItems.filter { item ->
+                val nameLower = item.name.lowercase()
+                val covered = significantTokens.count { nameLower.contains(it) }
+                val ratio = covered.toFloat() / significantTokens.size
+                if (ratio < 0.5f) {
+                    log.warn("[SMART] name_coverage_rejected query={} name={} covered={}/{}", normalizedQuery, item.name, covered, significantTokens.size)
+                    false
+                } else true
+            }
+        } else validItems
+
+        val persistResult: CatalogPersistResult = if (itemsToPersist.isNotEmpty() &&
+            itemsToPersist.all { it.confidence >= config.catalogWriteConfidenceThreshold }
         ) {
-            persistToCatalog(normalizedQuery, locale, country, validItems)
+            persistToCatalog(normalizedQuery, locale, country, itemsToPersist)
         } else {
-            if (validItems.isNotEmpty()) {
+            if (itemsToPersist.isNotEmpty()) {
                 log.info("[SMART] low_confidence_skip query={} confidences={}",
-                    normalizedQuery, validItems.joinToString { it.confidence.toString() })
+                    normalizedQuery, itemsToPersist.joinToString { it.confidence.toString() })
             }
             CatalogPersistResult.Skipped
         }
