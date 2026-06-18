@@ -143,7 +143,8 @@ data class ImageAnalysisItem(
     val carbsG: Double,
     val fatG: Double,
     val fiberG: Double?,
-    @Serializable(with = NullableRoundedIntSerializer::class) val sodiumMg: Int? = null
+    @Serializable(with = NullableRoundedIntSerializer::class) val sodiumMg: Int? = null,
+    val sugarG: Double? = null
 )
 
 @Serializable
@@ -159,6 +160,7 @@ data class ImageAnalysisResponse(
     val totalFatG: Double,
     val totalFiberG: Double?,
     @Serializable(with = NullableRoundedIntSerializer::class) val totalSodiumMg: Int? = null,
+    val totalSugarG: Double? = null,
     val notes: String? = null
 )
 

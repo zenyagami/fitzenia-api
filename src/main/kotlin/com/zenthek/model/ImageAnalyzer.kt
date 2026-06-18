@@ -125,7 +125,7 @@ For each item, choose the most natural serving unit a human would use to count o
 Rules:
 - `name` must be the SINGULAR form of the food (so the UI can render "5 × Taco al pastor"
   cleanly). Use "Taco al pastor", not "Tacos al pastor".
-- The per-item nutrition fields (calories, proteinG, carbsG, fatG, fiberG, sodiumMg) are
+- The per-item nutrition fields (calories, proteinG, carbsG, fatG, fiberG, sodiumMg, sugarG) are
   for ONE unit of `servingUnit`. If one taco has ~150 kcal, return calories=150 even when
   servingCount=5. The response `totalCalories` is the sum of `calories × servingCount`
   across all items.
@@ -153,7 +153,7 @@ STEP 4 — IDENTIFICATION, HIDDEN INGREDIENTS & ESTIMATION
 1. Identify every distinct food item visible.
 2. For each item, estimate portion in grams using Step 2 priority rules.
 3. Calculate per-UNIT nutrition using Step 2.5's servingUnit. `calories`, `proteinG`,
-   `carbsG`, `fatG`, `fiberG`, and `sodiumMg` on each item are for exactly ONE unit of
+   `carbsG`, `fatG`, `fiberG`, `sodiumMg`, and `sugarG` on each item are for exactly ONE unit of
    `servingUnit` — NOT the sum for the whole photo.
    - For branded items (Big Mac, specific drink brand), use the brand's published
      per-unit nutrition.
@@ -166,6 +166,11 @@ STEP 4 — IDENTIFICATION, HIDDEN INGREDIENTS & ESTIMATION
    - Sauces and dressings: identify dips, glazes, and dressings; creamy sauces are high-fat.
    - Estimate sodium (mg) per item where reasonably possible (soy sauce, processed foods,
      restaurant dishes). Use null when sodium is genuinely unknown (plain steamed vegetables).
+   - Estimate sugar (g) whenever the identified food clearly contains natural or added sugar.
+     Cakes, cookies, desserts, sweetened drinks, fruit, and sweet sauces should normally have a
+     non-null sugarG estimate. Use 0.0 only when sugar is meaningfully absent, and null only when
+     the food identity or recipe is too uncertain to make a reasonable estimate. Sugar is already
+     included within carbsG; do not add it again when calculating calories or carbohydrates.
 5. Sum all items into totals.
 6. Totals: `totalCalories` and `totalXxxG` at the response level are
    `Σ (item.calories × item.servingCount)` etc., summed across all items in the photo.
@@ -213,7 +218,8 @@ RESPONSE SCHEMA (strict — return ONLY valid JSON, no markdown, no code fences)
       "carbsG": number,
       "fatG": number,
       "fiberG": number | null,
-      "sodiumMg": number | null
+      "sodiumMg": number | null,
+      "sugarG": number | null           // optional; include whenever reasonably estimable
     }
   ],
   "totalCalories": number,
@@ -222,6 +228,7 @@ RESPONSE SCHEMA (strict — return ONLY valid JSON, no markdown, no code fences)
   "totalFatG": number,
   "totalFiberG": number | null,
   "totalSodiumMg": number | null,
+  "totalSugarG": number | null,         // optional; sum of sugarG × servingCount when estimable
   "notes": string | null
 }
 
@@ -239,6 +246,9 @@ RULES
   servingUnit="portion" and servingCount=1, and downgrade confidence to "low".
 - Per-item nutrition fields are per-ONE-servingUnit. Totals are summed across
   `item.calories × item.servingCount` across all items.
+- Return sugarG and totalSugarG whenever they can be reasonably estimated. They may be omitted or
+  null only when sugar cannot be estimated reliably. A clearly identified sugary food such as cake
+  must have a non-null sugar estimate.
 - `name` is always singular. Quantity belongs in `servingCount`, never in `name`.
 """.trimIndent()
 
@@ -296,6 +306,7 @@ RULES
                         putJsonObject("fatG") { put("type", "number") }
                         putNullableNumber("fiberG")
                         putNullableNumber("sodiumMg")
+                        putNullableNumber("sugarG")
                     }
                     putJsonArray("required") {
                         add("name")
@@ -319,6 +330,7 @@ RULES
             putJsonObject("totalFatG") { put("type", "number") }
             putNullableNumber("totalFiberG")
             putNullableNumber("totalSodiumMg")
+            putNullableNumber("totalSugarG")
             putNullableString("notes")
         }
         putJsonArray("required") {
