@@ -2,6 +2,7 @@ package com.zenthek.upstream.openai
 
 import com.zenthek.model.ImageAnalysisResponse
 import com.zenthek.model.ImageAnalyzer
+import com.zenthek.model.applyAtwaterFallback
 import com.zenthek.model.ImageAnalyzerFactory.buildImageAnalyzeUserPrompt
 import com.zenthek.model.ImageAnalyzerFactory.imageAnalysisResponseSchema
 import com.zenthek.model.ImageAnalyzerFactory.IMAGE_ANALYZE_SYSTEM_PROMPT
@@ -97,6 +98,6 @@ class OpenAiApiService(
             ?.jsonPrimitive?.content
             ?: error("Unexpected OpenAI response structure: $responseText")
 
-        return json.decodeFromString(ImageAnalysisResponse.serializer(), content)
+        return json.decodeFromString(ImageAnalysisResponse.serializer(), content).applyAtwaterFallback()
     }
 }

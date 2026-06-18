@@ -139,6 +139,7 @@ data class ImageAnalysisItem(
     val confidence: String,
     // Per-ONE-servingUnit nutrition:
     @Serializable(with = RoundedIntSerializer::class) val calories: Int,
+    val caloriesExact: Double,
     val proteinG: Double,
     val carbsG: Double,
     val fatG: Double,
@@ -155,6 +156,7 @@ data class ImageAnalysisResponse(
     val isLikelyRestaurant: Boolean = false,
     val items: List<ImageAnalysisItem>,
     @Serializable(with = RoundedIntSerializer::class) val totalCalories: Int,
+    val totalCaloriesExact: Double,
     val totalProteinG: Double,
     val totalCarbsG: Double,
     val totalFatG: Double,
@@ -163,6 +165,23 @@ data class ImageAnalysisResponse(
     val totalSugarG: Double? = null,
     val notes: String? = null
 )
+
+fun ImageAnalysisResponse.applyAtwaterFallback(): ImageAnalysisResponse {
+    val fixedItems = items.map { item ->
+        val exactCalories = if (item.caloriesExact <= 0.0 && (item.proteinG + item.carbsG + item.fatG) > 0.0) {
+            4.0 * item.proteinG + 4.0 * item.carbsG + 9.0 * item.fatG
+        } else item.caloriesExact
+        item.copy(calories = exactCalories.roundToInt(), caloriesExact = exactCalories)
+    }
+    val fixedTotalExact = if (totalCaloriesExact <= 0.0 && (totalProteinG + totalCarbsG + totalFatG) > 0.0) {
+        fixedItems.sumOf { it.caloriesExact * it.servingCount }
+    } else totalCaloriesExact
+    return copy(
+        items = fixedItems,
+        totalCalories = fixedTotalExact.roundToInt(),
+        totalCaloriesExact = fixedTotalExact
+    )
+}
 
 @Serializable
 data class AnalyzeImageRequest(

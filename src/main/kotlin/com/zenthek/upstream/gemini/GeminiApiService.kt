@@ -2,6 +2,7 @@ package com.zenthek.upstream.gemini
 
 import com.zenthek.model.ImageAnalysisResponse
 import com.zenthek.model.ImageAnalyzer
+import com.zenthek.model.applyAtwaterFallback
 import com.zenthek.model.ImageAnalyzerFactory.buildImageAnalyzeUserPrompt
 import com.zenthek.model.ImageAnalyzerFactory.imageAnalysisResponseSchema
 import com.zenthek.model.ImageAnalyzerFactory.IMAGE_ANALYZE_SYSTEM_PROMPT
@@ -145,7 +146,7 @@ class GeminiApiService(
         }
 
         return try {
-            json.decodeFromString(ImageAnalysisResponse.serializer(), content)
+            json.decodeFromString(ImageAnalysisResponse.serializer(), content).applyAtwaterFallback()
         } catch (e: Exception) {
             log.error("Failed to deserialize Gemini content: ${e.message}. Content: $content")
             throw e

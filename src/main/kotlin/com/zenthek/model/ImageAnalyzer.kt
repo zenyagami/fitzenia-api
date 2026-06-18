@@ -50,19 +50,19 @@ Before anything else, evaluate image quality:
 - No food visible (landscape, person, object) → return IMMEDIATELY:
   { "errorCode": "FOOD_NOT_DETECTED", "title": null, "subtitle": null,
     "isLikelyRestaurant": false, "items": [], "totalCalories": 0,
-    "totalProteinG": 0.0, "totalCarbsG": 0.0, "totalFatG": 0.0,
+    "totalCaloriesExact": 0.0, "totalProteinG": 0.0, "totalCarbsG": 0.0, "totalFatG": 0.0,
     "totalFiberG": null, "totalSodiumMg": null}
 
 - Food is present but too dark to distinguish textures → return IMMEDIATELY:
   { "errorCode": "POOR_LIGHTING", "title": null, "subtitle": null,
     "isLikelyRestaurant": false, "items": [], "totalCalories": 0,
-    "totalProteinG": 0.0, "totalCarbsG": 0.0, "totalFatG": 0.0,
+    "totalCaloriesExact": 0.0, "totalProteinG": 0.0, "totalCarbsG": 0.0, "totalFatG": 0.0,
     "totalFiberG": null, "totalSodiumMg": null}
 
 - Motion blur makes items indistinguishable → return IMMEDIATELY:
   { "errorCode": "IMAGE_TOO_BLURRY", "title": null, "subtitle": null,
     "isLikelyRestaurant": false, "items": [], "totalCalories": 0,
-    "totalProteinG": 0.0, "totalCarbsG": 0.0, "totalFatG": 0.0,
+    "totalCaloriesExact": 0.0, "totalProteinG": 0.0, "totalCarbsG": 0.0, "totalFatG": 0.0,
     "totalFiberG": null, "totalSodiumMg": null }
 
 - If quality is acceptable and food is visible: set "errorCode": null and continue.
@@ -125,10 +125,11 @@ For each item, choose the most natural serving unit a human would use to count o
 Rules:
 - `name` must be the SINGULAR form of the food (so the UI can render "5 × Taco al pastor"
   cleanly). Use "Taco al pastor", not "Tacos al pastor".
-- The per-item nutrition fields (calories, proteinG, carbsG, fatG, fiberG, sodiumMg, sugarG) are
+- The per-item nutrition fields (caloriesExact, proteinG, carbsG, fatG, fiberG, sodiumMg, sugarG) are
   for ONE unit of `servingUnit`. If one taco has ~150 kcal, return calories=150 even when
-  servingCount=5. The response `totalCalories` is the sum of `calories × servingCount`
-  across all items.
+  servingCount=5. `calories` is the rounded integer form of `caloriesExact` for backward
+  compatibility. The response `totalCaloriesExact` is the sum of `caloriesExact × servingCount`
+  across all items, and `totalCalories` is its rounded integer form.
 - `weightG` is still the TOTAL grams visible in the photo (= count × per-unit grams).
   Include it for sanity-checking and for the backend/client to cross-validate.
 - Prefer count nouns over grams whenever the food is discrete. A user thinks "2 tacos",
@@ -152,7 +153,7 @@ STEP 4 — IDENTIFICATION, HIDDEN INGREDIENTS & ESTIMATION
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 1. Identify every distinct food item visible.
 2. For each item, estimate portion in grams using Step 2 priority rules.
-3. Calculate per-UNIT nutrition using Step 2.5's servingUnit. `calories`, `proteinG`,
+3. Calculate per-UNIT nutrition using Step 2.5's servingUnit. `caloriesExact`, `proteinG`,
    `carbsG`, `fatG`, `fiberG`, `sodiumMg`, and `sugarG` on each item are for exactly ONE unit of
    `servingUnit` — NOT the sum for the whole photo.
    - For branded items (Big Mac, specific drink brand), use the brand's published
@@ -172,8 +173,9 @@ STEP 4 — IDENTIFICATION, HIDDEN INGREDIENTS & ESTIMATION
      the food identity or recipe is too uncertain to make a reasonable estimate. Sugar is already
      included within carbsG; do not add it again when calculating calories or carbohydrates.
 5. Sum all items into totals.
-6. Totals: `totalCalories` and `totalXxxG` at the response level are
-   `Σ (item.calories × item.servingCount)` etc., summed across all items in the photo.
+6. Totals: `totalCaloriesExact` and `totalXxxG` at the response level are
+   `Σ (item.caloriesExact × item.servingCount)` etc., summed across all items in the photo.
+   `totalCalories` is `totalCaloriesExact` rounded to the nearest integer.
 7. Assign confidence per item:
    - "high" — food type AND portion are clearly identifiable
    - "medium" — one factor (type or portion) is uncertain
@@ -213,7 +215,8 @@ RESPONSE SCHEMA (strict — return ONLY valid JSON, no markdown, no code fences)
       "servingCount": number,          // count of servingUnit detected (>0)
       "weightG": number,               // TOTAL grams for the whole detected portion
       "confidence": "high" | "medium" | "low",
-      "calories": number,              // per ONE servingUnit
+      "calories": number,              // rounded integer per ONE servingUnit (legacy)
+      "caloriesExact": number,         // precise decimal per ONE servingUnit
       "proteinG": number,
       "carbsG": number,
       "fatG": number,
@@ -222,7 +225,8 @@ RESPONSE SCHEMA (strict — return ONLY valid JSON, no markdown, no code fences)
       "sugarG": number | null           // optional; include whenever reasonably estimable
     }
   ],
-  "totalCalories": number,
+  "totalCalories": number,             // rounded integer total (legacy)
+  "totalCaloriesExact": number,        // precise decimal total
   "totalProteinG": number,
   "totalCarbsG": number,
   "totalFatG": number,
@@ -238,14 +242,16 @@ RULES
 - When errorCode is null: title, subtitle, isLikelyRestaurant, and all total fields MUST be present and valid.
 - When errorCode is set: title and subtitle MUST be null; items MUST be empty; totals MUST be 0/null.
 - All numeric values are JSON numbers, never strings.
-- Round calories and sodiumMg to the nearest integer; all other macros to one decimal place.
+- Round `calories` and `totalCalories` to the nearest integer for backward compatibility. Report
+  `caloriesExact` and `totalCaloriesExact` as precise decimals (never round a positive value to 0).
+  Round sodiumMg to the nearest integer and all other macros to one decimal place.
 - If a portion is completely inestimable, omit that item and mention it in "notes".
 - If a locale is provided, return all string fields in that locale's language.
   Use locally common food names (e.g. "Arroz Branco" for pt-BR, "Riz Blanc" for fr-FR).
 - Every item MUST include servingUnit and servingCount. If truly uncertain, use
   servingUnit="portion" and servingCount=1, and downgrade confidence to "low".
-- Per-item nutrition fields are per-ONE-servingUnit. Totals are summed across
-  `item.calories × item.servingCount` across all items.
+- Per-item nutrition fields are per-ONE-servingUnit. Exact totals are summed across
+  `item.caloriesExact × item.servingCount` across all items.
 - Return sugarG and totalSugarG whenever they can be reasonably estimated. They may be omitted or
   null only when sugar cannot be estimated reliably. A clearly identified sugary food such as cake
   must have a non-null sugar estimate.
@@ -301,6 +307,7 @@ RULES
                             }
                         }
                         putJsonObject("calories") { put("type", "number") }
+                        putJsonObject("caloriesExact") { put("type", "number") }
                         putJsonObject("proteinG") { put("type", "number") }
                         putJsonObject("carbsG") { put("type", "number") }
                         putJsonObject("fatG") { put("type", "number") }
@@ -316,6 +323,7 @@ RULES
                         add("weightG")
                         add("confidence")
                         add("calories")
+                        add("caloriesExact")
                         add("proteinG")
                         add("carbsG")
                         add("fatG")
@@ -325,6 +333,7 @@ RULES
                 }
             }
             putJsonObject("totalCalories") { put("type", "number") }
+            putJsonObject("totalCaloriesExact") { put("type", "number") }
             putJsonObject("totalProteinG") { put("type", "number") }
             putJsonObject("totalCarbsG") { put("type", "number") }
             putJsonObject("totalFatG") { put("type", "number") }
@@ -340,6 +349,7 @@ RULES
             add("isLikelyRestaurant")
             add("items")
             add("totalCalories")
+            add("totalCaloriesExact")
             add("totalProteinG")
             add("totalCarbsG")
             add("totalFatG")

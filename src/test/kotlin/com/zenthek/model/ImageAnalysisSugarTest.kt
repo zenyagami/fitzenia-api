@@ -62,6 +62,7 @@ class ImageAnalysisSugarTest {
                 "weightG": 90.0,
                 "confidence": "high",
                 "calories": 300,
+                "caloriesExact": 300.0,
                 "proteinG": 3.0,
                 "carbsG": 40.0,
                 "fatG": 14.0,
@@ -70,6 +71,7 @@ class ImageAnalysisSugarTest {
                 $itemSugarJson
               }],
               "totalCalories": 300,
+              "totalCaloriesExact": 300.0,
               "totalProteinG": 3.0,
               "totalCarbsG": 40.0,
               "totalFatG": 14.0,
