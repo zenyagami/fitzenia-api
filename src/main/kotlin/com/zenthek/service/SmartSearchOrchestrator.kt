@@ -706,7 +706,10 @@ class SmartSearchOrchestrator internal constructor(
         country: String,
         upstream: List<InternalFoodItem>
     ): AiOutcome {
-        val hits = upstream.take(UPSTREAM_HITS_FOR_AI).map { it.toSummary() }
+        val hits = upstream
+            .sortedWith(compareBy { if (it.kind == ResultKind.GENERIC) 0 else 1 })
+            .take(UPSTREAM_HITS_FOR_AI)
+            .map { it.toSummary() }
 
         // Classify
         val classify = try {
