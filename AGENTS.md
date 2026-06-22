@@ -174,8 +174,8 @@ Adding a route to an existing bucket: drop it into the matching `rateLimit(...) 
 2. Parallel: catalog `lookupQueryMappings` AND upstream OFF (+ USDA if enabled).
 3. Catalog hit → `readCanonicals(ids)`, assemble, return.
 4. Catalog miss → split upstream by `ResultKind` (GENERIC vs BRANDED). One whole-token GENERIC hit → accept without AI.
-5. AI classify (`gemini-2.5-flash-lite`, ≤`AI_SEARCH_CLASSIFY_TIMEOUT_MS`) → `MATCH_EXISTING` / `CREATE_SPECIFIC` / `CREATE_BROAD`.
-6. AI generate (`gemini-2.5-flash`, ≤`AI_SEARCH_GENERATE_TIMEOUT_MS`), grounded on upstream + `findEquivalentCanonicalCandidates` for cross-locale linking.
+5. AI classify (`gemini-3.1-flash-lite`, ≤`AI_SEARCH_CLASSIFY_TIMEOUT_MS`) → `MATCH_EXISTING` / `CREATE_SPECIFIC` / `CREATE_BROAD`.
+6. AI generate (`gemini-3.1-flash-lite`, ≤`AI_SEARCH_GENERATE_TIMEOUT_MS`), grounded on upstream + `findEquivalentCanonicalCandidates` for cross-locale linking.
 7. `NutritionValidator` sanity-check → if `confidence ≥ CATALOG_WRITE_CONFIDENCE_THRESHOLD`, persist via `insert_canonical_foods` RPC. `SMART_SEARCH_AI_SYNC_ON_MISS` decides sync vs async write-behind.
 8. Assemble `SmartSearchResponse` (`bestMatch`, `bestMatchCandidates`, `genericMatches`, `brandedMatches`) with bestMatch items removed from the generic/branded pools.
 
@@ -366,8 +366,8 @@ data class AppConfig(
 | **Smart Food Search** | | | |
 | `SMART_FOOD_SEARCH_ENABLED` | no | `true` | master switch |
 | `SMART_SEARCH_USDA_ENABLED` | no | `true` | USDA fan-out kill switch |
-| `AI_SEARCH_RANK_MODEL` | no | `gemini-2.5-flash-lite` | classify/rank |
-| `AI_SEARCH_GENERATE_MODEL` | no | `gemini-2.5-flash` | grounded best-match generation |
+| `AI_SEARCH_RANK_MODEL` | no | `gemini-3.1-flash-lite` | classify/rank |
+| `AI_SEARCH_GENERATE_MODEL` | no | `gemini-3.1-flash-lite` | grounded best-match generation |
 | `AI_SEARCH_CLASSIFY_TIMEOUT_MS` | no | `3000` | |
 | `AI_SEARCH_GENERATE_TIMEOUT_MS` | no | `8000` | |
 | `SMART_SEARCH_AI_SYNC_ON_MISS` | no | `true` | `true` = canonical immediately (higher latency); `false` = async write-behind (lower latency, first user upstream-only) |

@@ -152,7 +152,7 @@ Build / deploy: `./gradlew jib -Pprod -PtargetService=coach` then `./deploy-coac
 
 | Var | Required | Purpose |
 | --- | --- | --- |
-| `COACH_LLM_MODEL` | yes | `gemini-2.5-flash-lite` (recommended) or `gemini-3.1-flash-lite` |
+| `COACH_LLM_MODEL` | yes | `gemini-3.1-flash-lite` (recommended) or `gemini-3.1-flash-lite` |
 | `COACH_ESCALATION_MODEL` | no | Default `gemini-2.5-pro` |
 | `COACH_USER_TZ_FALLBACK` | no | Default `UTC` — used when client doesn't supply `userTz` |
 | `REVENUECAT_WEBHOOK_AUTH` | yes | Static value compared (constant-time) against inbound `Authorization` header |
@@ -407,7 +407,7 @@ event: chat_created   data: { "chatId":"uuid", "title":"New chat" }
 event: token          data: { "delta":"Based on your remaining " }
 …
 event: title          data: { "chatId":"uuid", "title":"Dinner ideas for cut" }
-event: done           data: { "messageId":"uuid", "tokens":{...}, "model":"gemini-2.5-flash-lite", "escalated":false }
+event: done           data: { "messageId":"uuid", "tokens":{...}, "model":"gemini-3.1-flash-lite", "escalated":false }
 ```
 
 Subsequent turns: `POST /api/coach/chats/{chatId}/messages`.
@@ -781,7 +781,7 @@ Reject if completed assistant message contains: dosage patterns (`\d+\s*(mg|mcg|
 
 | Item | Price | Source |
 | --- | --- | --- |
-| `gemini-2.5-flash-lite` | $0.10 in / $0.40 out per 1M | [Gemini pricing](https://ai.google.dev/gemini-api/docs/pricing) |
+| `gemini-3.1-flash-lite` | $0.10 in / $0.40 out per 1M | [Gemini pricing](https://ai.google.dev/gemini-api/docs/pricing) |
 | `gemini-3.1-flash-lite` (GA) | $0.25 in / $1.50 out per 1M | same |
 | `gemini-2.5-pro` (≤200k ctx) | $1.25 in / $10.00 out per 1M | same |
 | `gemini-embedding-2` / `001` | $0.15 / 1M input | same |
@@ -793,12 +793,12 @@ Effective input ≈ 2,960 tokens (system prompt mostly cached after first turn; 
 
 | `COACH_LLM_MODEL` | Per-turn worst case | Monthly cap @ $4/yr | Status |
 | --- | --- | --- | --- |
-| `gemini-2.5-flash-lite` | ≈ $0.000821 | **400** | GA, recommended for launch |
+| `gemini-3.1-flash-lite` | ≈ $0.000821 | **400** | GA, recommended for launch |
 | `gemini-3.1-flash-lite` | ≈ $0.001770 | **200** | GA, ~2× cost of 2.5 |
 
 Net subscriber revenue (~€30/yr → $20 after store cut + VAT) → ≥ 70% gross margin → ≤ $6/yr cost / user → ~$4 LLM + ~$2 infra.
 
-**Recommendation: launch on `gemini-2.5-flash-lite` (cap 400/month).** Move to 3.1 only if telemetry shows quality regressions Pro escalation doesn't fix.
+**Recommendation: launch on `gemini-3.1-flash-lite` (cap 400/month).** Move to 3.1 only if telemetry shows quality regressions Pro escalation doesn't fix.
 
 ### 8.3 Other caps
 

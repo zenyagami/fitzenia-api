@@ -90,9 +90,9 @@ spec:
         - name: SMART_SEARCH_AI_SYNC_ON_MISS
           value: "false"
         - name: AI_SEARCH_RANK_MODEL
-          value: "gemini-2.5-flash-lite"
+          value: "gemini-3.1-flash-lite"
         - name: AI_SEARCH_GENERATE_MODEL
-          value: "gemini-2.5-flash"
+          value: "gemini-3.1-flash-lite"
         - name: AI_SEARCH_CLASSIFY_TIMEOUT_MS
           value: "8000"
         - name: AI_SEARCH_GENERATE_TIMEOUT_MS

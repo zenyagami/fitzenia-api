@@ -184,8 +184,8 @@ private fun loadSmartSearchConfig(): SmartSearchConfig {
     return SmartSearchConfig(
         enabled = enabled,
         usdaEnabled = parseBoolFlag(env("SMART_SEARCH_USDA_ENABLED"), default = true),
-        aiRankModel = env("AI_SEARCH_RANK_MODEL")?.trim()?.ifBlank { null } ?: "gemini-2.5-flash-lite",
-        aiGenerateModel = env("AI_SEARCH_GENERATE_MODEL")?.trim()?.ifBlank { null } ?: "gemini-2.5-flash",
+        aiRankModel = env("AI_SEARCH_RANK_MODEL")?.trim()?.ifBlank { null } ?: "gemini-3.1-flash-lite",
+        aiGenerateModel = env("AI_SEARCH_GENERATE_MODEL")?.trim()?.ifBlank { null } ?: "gemini-3.1-flash-lite",
         aiClassifyTimeoutMs = env("AI_SEARCH_CLASSIFY_TIMEOUT_MS")?.trim()?.toLongOrNull() ?: 3_000L,
         aiGenerateTimeoutMs = env("AI_SEARCH_GENERATE_TIMEOUT_MS")?.trim()?.toLongOrNull() ?: 8_000L,
         aiSyncOnMiss = parseBoolFlag(env("SMART_SEARCH_AI_SYNC_ON_MISS"), default = true),
@@ -205,7 +205,7 @@ private fun loadAiProgressProjectionConfig(): AiProgressProjectionConfig = AiPro
     enabled = true,
     provider = ImageGenerationProvider.GEMINI,           // flip to GEMINI to A/B-test nano banana
     openAiImageModel = "gpt-image-2",
-    geminiImageModel = "gemini-3.1-flash-image-preview",         // nano banana
+    geminiImageModel = "gemini-3.1-flash-image",         // nano banana
     quality = "medium",
     size = "1024x1536",
     outputFormat = "jpeg",
@@ -215,7 +215,7 @@ private fun loadAiProgressProjectionConfig(): AiProgressProjectionConfig = AiPro
     stepBodyFatPercent = 3.0,
     maxUploadBytes = 8L * 1024 * 1024,                      // 8 MB
     allowedMimeTypes = setOf("image/jpeg", "image/png"),
-    gatekeeperModel = "gemini-2.5-flash-lite",
+    gatekeeperModel = "gemini-3.1-flash-lite",
     gatekeeperTimeoutMs = 20_000L,                          // Flash Lite + image + JSON schema: typically 4–8s, but cold start can push past 10s
     generateTimeoutMs = 120_000L,                           // OpenAI's published "up to 2 minutes" ceiling
     maxParallelRungs = 3,                                   // 5 once on Tier 2+

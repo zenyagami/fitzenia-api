@@ -779,14 +779,14 @@ class SmartSearchOrchestrator internal constructor(
                     )
                 )
             }
-        } catch (t: TimeoutCancellationException) {
+        } catch (_: TimeoutCancellationException) {
             log.warn("[SMART] ai_timeout stage=generate query={}", normalizedQuery)
             return AiOutcome.UpstreamOnly
         } catch (t: Throwable) {
             log.warn("[SMART] ai_error stage=generate query={} msg={}", normalizedQuery, t.message)
             return AiOutcome.UpstreamOnly
         }
-
+        log.debug("[SMART] ai_error NLP food from {} -> response={}",generated.items, config.aiGenerateModel)
         if (generated.items.isEmpty()) return AiOutcome.UpstreamOnly
 
         // Server-side nutrition validation. Items that fail are returned to the

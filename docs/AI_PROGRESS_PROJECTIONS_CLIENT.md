@@ -268,7 +268,7 @@ type GatekeeperVerdict = {
   estimatedBodyFatPercent: number | null;     // the photo-AI BF estimate
   estimatedBodyFatConfidence: number | null;  // 0..1
   estimatedBodyFatNotes: string | null;
-  model: string;                              // e.g. "gemini-2.5-flash-lite"
+  model: string;                              // e.g. "gemini-3.1-flash-lite"
 };
 
 type GatekeeperRejectionReason =
