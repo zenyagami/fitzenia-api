@@ -114,6 +114,9 @@ For each item, choose the most natural serving unit a human would use to count o
      • Can of cola → servingUnit="ml", servingCount=355
      • Bowl of soup → servingUnit="ml", servingCount=400
      • A cup of coffee → servingUnit="ml", servingCount=240
+   IMPORTANT: If servingUnit is "ml", all nutrition fields are for exactly 1 ml.
+   A 250 ml soup with 250 total kcal must use caloriesExact=1.0, not 250.
+   If you are not certain about per-ml nutrition, use servingUnit="portion" and servingCount=1.
 
 3. WEIGHT UNIT only as a fallback when no count/volume fits:
    "g" (preferred) or "oz"
@@ -121,6 +124,9 @@ For each item, choose the most natural serving unit a human would use to count o
      • A portion of fried rice on a plate → servingUnit="g", servingCount=200
      • A fillet of salmon → PREFER servingUnit="fillet", servingCount=1 over grams
      • Grated cheese heap → servingUnit="g", servingCount=30
+   IMPORTANT: If servingUnit is "g", all nutrition fields are for exactly 1 gram.
+   A 200 g pasta serving with 300 total kcal must use caloriesExact=1.5, not 300.
+   For bowls, plates, and mixed dishes, prefer servingUnit="portion", servingCount=1.
 
 Rules:
 - `name` must be the SINGULAR form of the food (so the UI can render "5 × Taco al pastor"
@@ -252,6 +258,9 @@ RULES
   servingUnit="portion" and servingCount=1, and downgrade confidence to "low".
 - Per-item nutrition fields are per-ONE-servingUnit. Exact totals are summed across
   `item.caloriesExact × item.servingCount` across all items.
+- For servingUnit "g" or "ml", per-ONE-servingUnit means per exactly 1 gram or 1 ml.
+  These values are normally small decimals. Never put total-portion or per-100g/per-100ml
+  nutrition into a 1 g or 1 ml serving.
 - Return sugarG and totalSugarG whenever they can be reasonably estimated. They may be omitted or
   null only when sugar cannot be estimated reliably. A clearly identified sugary food such as cake
   must have a non-null sugar estimate.

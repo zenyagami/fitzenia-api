@@ -11,10 +11,12 @@ import com.zenthek.service.AccountService
 import com.zenthek.service.AiProgressProjectionService
 import com.zenthek.service.DeleteLadderResult
 import com.zenthek.service.FoodService
+import com.zenthek.service.ImageAnalysisNutritionGuard
 import com.zenthek.service.LadderEventEmitter
 import com.zenthek.model.SearchStreamBestMatch
 import com.zenthek.model.SmartSearchResponse
 import com.zenthek.service.SmartSearchOrchestrator
+import com.zenthek.service.UpstreamFailureException
 import com.zenthek.service.UserProfileService
 import io.ktor.http.*
 import io.ktor.http.content.PartData
@@ -258,7 +260,17 @@ fun Route.configureFoodRoutes(
                 body.locale,
                 "image/jpeg"
             )
-            call.respond(HttpStatusCode.OK, result)
+            val guarded = guardImageAnalysisResult(
+                result = result,
+                userId = authenticatedUser.userId,
+                endpoint = "analyze-image",
+                imageBytes = imageBytes,
+                locale = body.locale,
+                mealTitlePresent = !body.mealTitle.isNullOrBlank(),
+                analyzerLabel = imageAnalyzer.label(),
+                modelLabel = imageAnalyzer.modelLabel(),
+            )
+            call.respond(HttpStatusCode.OK, guarded)
         }
 
         post("/analyze-image-stream") {
@@ -277,7 +289,17 @@ fun Route.configureFoodRoutes(
                         body.locale,
                         "image/jpeg"
                     )
-                    sendSseEvent("result", sseJson.encodeToString(ImageAnalysisResponse.serializer(), result))
+                    val guarded = guardImageAnalysisResult(
+                        result = result,
+                        userId = authenticatedUser.userId,
+                        endpoint = "analyze-image-stream",
+                        imageBytes = imageBytes,
+                        locale = body.locale,
+                        mealTitlePresent = !body.mealTitle.isNullOrBlank(),
+                        analyzerLabel = imageAnalyzer.label(),
+                        modelLabel = imageAnalyzer.modelLabel(),
+                    )
+                    sendSseEvent("result", sseJson.encodeToString(ImageAnalysisResponse.serializer(), guarded))
                 } catch (e: Exception) {
                     application.log.error("SSE analyze-image-stream failed", e)
                     sendSseEvent("error", """{"message":"Analysis failed"}""")
@@ -286,6 +308,72 @@ fun Route.configureFoodRoutes(
         }
     }
 }
+
+private fun guardImageAnalysisResult(
+    result: ImageAnalysisResponse,
+    userId: String,
+    endpoint: String,
+    imageBytes: ByteArray,
+    locale: String?,
+    mealTitlePresent: Boolean,
+    analyzerLabel: String,
+    modelLabel: String,
+): ImageAnalysisResponse {
+    val outcome = try {
+        ImageAnalysisNutritionGuard.sanitize(result)
+    } catch (e: UpstreamFailureException) {
+        log.warn(
+            "[FOOD] image-analysis nutrition rejected userId={} endpoint={} provider={} model={} imageBytes={} locale={} mealTitlePresent={} beforeKcal={} beforeProtein={} beforeCarbs={} beforeFat={} items={} reason={}",
+            userId,
+            endpoint,
+            analyzerLabel,
+            modelLabel,
+            imageBytes.size,
+            locale,
+            mealTitlePresent,
+            result.totalCaloriesExact,
+            result.totalProteinG,
+            result.totalCarbsG,
+            result.totalFatG,
+            result.items.joinToString { "${it.name}:${it.servingUnit}x${it.servingCount}" },
+            e.message,
+        )
+        throw e
+    }
+    if (outcome.repaired) {
+        log.warn(
+            "[FOOD] image-analysis nutrition repaired userId={} endpoint={} provider={} model={} imageBytes={} locale={} mealTitlePresent={} beforeKcal={} beforeProtein={} beforeCarbs={} beforeFat={} afterKcal={} afterProtein={} afterCarbs={} afterFat={} items={} reasons={}",
+            userId,
+            endpoint,
+            analyzerLabel,
+            modelLabel,
+            imageBytes.size,
+            locale,
+            mealTitlePresent,
+            outcome.before.calories,
+            outcome.before.protein,
+            outcome.before.carbs,
+            outcome.before.fat,
+            outcome.after.calories,
+            outcome.after.protein,
+            outcome.after.carbs,
+            outcome.after.fat,
+            outcome.response.items.joinToString { "${it.name}:${it.servingUnit}x${it.servingCount}" },
+            outcome.reasons.joinToString("; "),
+        )
+    }
+    return outcome.response
+}
+
+private fun ImageAnalyzer.label(): String =
+    javaClass.simpleName.ifBlank { javaClass.name }
+
+private fun ImageAnalyzer.modelLabel(): String =
+    when (label()) {
+        "GeminiApiService" -> "gemini-3.1-flash-lite"
+        "OpenAiApiService" -> "gpt-5-mini"
+        else -> "unknown"
+    }
 
 fun Route.configureUserRoutes(userProfileService: UserProfileService) {
     post("/register") {
