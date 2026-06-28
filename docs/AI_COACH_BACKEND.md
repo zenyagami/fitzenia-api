@@ -4,7 +4,7 @@
 >
 > This document was reviewed by Codex across 10 rounds. Every assertion is either backed by a `.sq` file in this repo, RC public docs, Gemini public docs, or explicitly flagged as a Phase-1 verification gate (§14 + §K). Sections that depend on remote schema details that the API repo doesn't yet contain are gated behind a snapshot step before any tool ships.
 
-The Fitzenia AI Coach is a **chat-style agentic RAG assistant** answering nutrition / training / app-mechanics questions, grounded in (a) a curated knowledge base and (b) the user's live profile/macros/goals via Koog tools. Runs on Ktor + Koog. Streams over SSE. Gemini 2.5 Flash Lite primary, Gemini 2.5 Pro on escalation. Conversation state in Supabase. Premium-gated.
+The Fitzenia AI Coach is a **chat-style agentic RAG assistant** answering nutrition / training / app-mechanics questions, grounded in (a) a curated knowledge base and (b) the user's live profile/macros/goals via Koog tools. Runs on Ktor + Koog. Streams over SSE. gemini-3.1-flash-lite primary, Gemini 3.5 Flash Pro on escalation. Conversation state in Supabase. Premium-gated.
 
 ---
 
@@ -783,7 +783,6 @@ Reject if completed assistant message contains: dosage patterns (`\d+\s*(mg|mcg|
 | --- | --- | --- |
 | `gemini-3.1-flash-lite` | $0.10 in / $0.40 out per 1M | [Gemini pricing](https://ai.google.dev/gemini-api/docs/pricing) |
 | `gemini-3.1-flash-lite` (GA) | $0.25 in / $1.50 out per 1M | same |
-| `gemini-2.5-pro` (≤200k ctx) | $1.25 in / $10.00 out per 1M | same |
 | `gemini-embedding-2` / `001` | $0.15 / 1M input | same |
 | Context cache reads | 10% of base input | same |
 
