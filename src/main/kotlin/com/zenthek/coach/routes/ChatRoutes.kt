@@ -103,7 +103,38 @@ private fun stripKbCitations(text: String): String =
         .replace(Regex("""[ \t]+\n"""), "\n")           // trailing spaces before newline
         .trim()
 
-private fun publicToolStatusName(@Suppress("UNUSED_PARAMETER") internalName: String): String = "thinking"
+// The coach's answers are Markdown rendered on mobile, where h1–h3 headers look oversized.
+// Demote every ATX header a fixed number of levels (clamped at h6) so the app renders them
+// smaller while relative hierarchy is preserved. Deterministic — independent of how well the
+// model follows formatting guidance. Only leading `#`s followed by whitespace are treated as
+// headers, so "#1" and mid-line "#" are left untouched.
+private const val HEADER_DEMOTE_LEVELS = 2
+
+private val ATX_HEADER_REGEX = Regex("""^(#{1,6})(?=\s)""", RegexOption.MULTILINE)
+
+private fun demoteMarkdownHeaders(text: String): String =
+    ATX_HEADER_REGEX.replace(text) { match ->
+        "#".repeat(minOf(match.value.length + HEADER_DEMOTE_LEVELS, 6))
+    }
+
+// Maps an internal tool id to a stable, machine-readable status key the client localizes
+// into a "working" indicator (e.g. "reading_diary" -> "Analyzing your diary…"). These keys
+// are part of the client wire contract — keep them and docs/AI_COACH_CLIENT.md in sync.
+// Unknown / future tools fall back to the generic "thinking".
+private fun publicToolStatusName(internalName: String): String = when (internalName) {
+    "getUserProfile"      -> "reading_profile"
+    "getUserGoal"         -> "reading_goal"
+    "getCurrentTargets"   -> "checking_targets"
+    "getTodayMacros"      -> "checking_today"
+    "getRecentWeight",
+    "getWeightTrend"      -> "analyzing_weight"
+    "getCurrentPhase"     -> "reading_plan"
+    "getDiaryForDate"     -> "reading_diary"
+    "getUserCoachNotes"   -> "reading_notes"
+    "writeUserCoachNote"  -> "saving_note"
+    "searchKnowledgeBase" -> "searching_knowledge"
+    else                  -> "thinking"
+}
 
 private const val GENERIC_FALLBACK =
     "I'm sorry, I wasn't able to generate a safe response for that. Please try rephrasing, or ask a general nutrition or fitness question."
@@ -671,6 +702,9 @@ private suspend fun processMessage(
                 // Strip internal (KB: doc-id) grounding markers before display + persistence.
                 // Structured `citation` events (below) carry source attribution for the client.
                 assistantContent = stripKbCitations(assistantContent)
+
+                // Shrink oversized Markdown headers so they render calmly on mobile.
+                assistantContent = demoteMarkdownHeaders(assistantContent)
 
                 // Guard: Gemini thinking models can emit 0 TextDelta frames on empty tool results.
                 if (assistantContent.isBlank()) {

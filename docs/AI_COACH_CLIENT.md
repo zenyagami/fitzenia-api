@@ -86,10 +86,10 @@ event: chat_created
 data: {"chatId":"5e2…","title":"New chat"}
 
 event: tool_start
-data: {"name":"getTodayMacros"}
+data: {"name":"checking_today"}
 
 event: tool_done
-data: {"name":"getTodayMacros","ms":143}
+data: {"name":"checking_today","ms":143}
 
 event: token
 data: {"delta":"On a cut, aim for about 2.0–2.4 g of protein per kg…"}
@@ -126,7 +126,23 @@ data class ToolStartPayload(val name: String)
 @Serializable
 data class ToolDonePayload(val name: String, val ms: Long)
 ```
-The coach is reading the user's live data (targets, today's macros, weight history, diary, notes, KB). Use these to drive a "Checking your data…" indicator. `name` is the tool id (e.g. `getTodayMacros`, `getCurrentTargets`); `ms` is its duration.
+The coach is reading the user's live data (targets, today's macros, weight history, diary, notes, KB). Use these to drive a "working" indicator. `name` is **not** the raw tool id — it is a **stable status key** from the closed set below, meant to be mapped to your own **localized** display string. `ms` is the tool's duration.
+
+| `name` key | Meaning | Suggested display (EN) |
+|---|---|---|
+| `reading_profile` | Reading the user's profile | "Reviewing your profile…" |
+| `reading_goal` | Reading the user's goal | "Reviewing your goal…" |
+| `checking_targets` | Reading current calorie/macro targets | "Checking your targets…" |
+| `checking_today` | Reading today's logged food | "Checking today's food…" |
+| `analyzing_weight` | Reading weight history / trend | "Analyzing your weight…" |
+| `reading_plan` | Reading the active phase/plan | "Reviewing your plan…" |
+| `reading_diary` | Reading diary entries for a date | "Analyzing your diary…" |
+| `reading_notes` | Reading saved coach notes | "Reviewing your notes…" |
+| `saving_note` | Saving a coach note | "Saving a note…" |
+| `searching_knowledge` | Searching the knowledge base | "Searching nutrition knowledge…" |
+| `thinking` | Generic fallback (unknown/future tool) | "Thinking…" |
+
+Treat `thinking` as the catch-all: if a future tool ships a key you don't recognize, fall back to your generic indicator rather than showing the raw key.
 
 #### `token` — exactly once on a normal turn (full message)
 ```kotlin
