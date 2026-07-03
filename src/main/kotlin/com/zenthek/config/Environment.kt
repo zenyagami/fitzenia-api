@@ -15,7 +15,33 @@ data class AppConfig(
     val aiProgressProjection: AiProgressProjectionConfig,
     val offMirror: OffMirrorConfig,
     val usdaMirror: UsdaMirrorConfig,
+    val revenueCat: RevenueCatConfig,
 )
+
+/**
+ * RevenueCat → Supabase entitlement sync. Drives `POST /webhooks/revenuecat`
+ * and the stale-claim sweeper Job.
+ *
+ * **Optional at load on purpose.** Both secrets are absent in dev and not wired into the
+ * running food API in every environment. Making them hard-required would crash the
+ * `fitzenia-api` service before the secrets land. Instead the webhook route
+ * checks [configured] at request time and returns 503 when unset — every other endpoint
+ * keeps working.
+ *
+ * - [webhookAuth]: static value RevenueCat sends in the `Authorization` header
+ *   (`REVENUECAT_WEBHOOK_AUTH`); constant-time compared. No HMAC body signing.
+ * - [restApiKey]: server secret for `GET /v1/subscribers/{id}` (`REVENUECAT_REST_API_KEY`).
+ * - [restBaseUrl]: RevenueCat REST host; overridable for tests via `REVENUECAT_REST_BASE_URL`.
+ */
+data class RevenueCatConfig(
+    val webhookAuth: String?,
+    val restApiKey: String?,
+    val restBaseUrl: String,
+) {
+    /** True only when both secrets are present — the webhook + sweeper refuse to run otherwise. */
+    val configured: Boolean
+        get() = !webhookAuth.isNullOrBlank() && !restApiKey.isNullOrBlank()
+}
 
 /**
  * OFF mirror feature config. Both flags default from APP_ENVIRONMENT (true in
@@ -244,6 +270,13 @@ private fun loadSupabaseServiceRoleKey(): String {
         ?: error("Missing SUPABASE_SERVICE_ROLE_KEY")
 }
 
+private fun loadRevenueCatConfig(): RevenueCatConfig = RevenueCatConfig(
+    webhookAuth = env("REVENUECAT_WEBHOOK_AUTH")?.trim()?.ifBlank { null },
+    restApiKey = env("REVENUECAT_REST_API_KEY")?.trim()?.ifBlank { null },
+    restBaseUrl = (env("REVENUECAT_REST_BASE_URL")?.trim()?.ifBlank { null }
+        ?: "https://api.revenuecat.com").trimEnd('/'),
+)
+
 object ConfigLoader {
     fun loadConfig(): AppConfig {
         val environment = AppEnvironment.fromString(env("APP_ENVIRONMENT"))
@@ -280,6 +313,7 @@ object ConfigLoader {
             aiProgressProjection = aiProgressProjection,
             offMirror = offMirror,
             usdaMirror = usdaMirror,
+            revenueCat = loadRevenueCatConfig(),
         )
     }
 
@@ -309,6 +343,7 @@ object ConfigLoader {
             aiProgressProjection = aiProgressProjection,
             offMirror = offMirror,
             usdaMirror = usdaMirror,
+            revenueCat = loadRevenueCatConfig(),
         )
     }
 }

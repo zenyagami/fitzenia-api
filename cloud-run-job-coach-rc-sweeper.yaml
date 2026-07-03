@@ -1,0 +1,48 @@
+apiVersion: run.googleapis.com/v1
+kind: Job
+metadata:
+  name: coach-rc-sweeper
+  labels:
+    cloud.googleapis.com/location: europe-north1
+spec:
+  template:
+    spec:
+      # Single task. Re-claims are FOR UPDATE SKIP LOCKED + attempt-capped, so a concurrent
+      # run (or the live webhook) never double-processes a row — harmless to overlap.
+      parallelism: 1
+      taskCount: 1
+      template:
+        spec:
+          # One pass: claim recoverable rows → replay subscriber sync each. Short, but allow
+          # headroom for a backlog of stuck events + RevenueCat REST round-trips.
+          timeoutSeconds: 300
+          # No retries — a failed run logs and exits; the next scheduled run re-claims the same set.
+          maxRetries: 0
+          containers:
+          - name: coach-rc-sweeper
+            image: gcr.io/PROJECT_ID/fitzenia-coach-rc-sweeper:IMAGE_TAG
+            resources:
+              limits:
+                cpu: "1"
+                memory: "512Mi"
+            env:
+            - name: APP_ENVIRONMENT
+              value: "PRODUCTION"
+            # The sweeper builds its own minimal client (not ConfigLoader) and reads only these
+            # from env. Wire from Secret Manager — never bake into the image. It does NOT need
+            # REVENUECAT_WEBHOOK_AUTH (it replays already-claimed DB rows, no header to verify).
+            - name: SUPABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: SUPABASE_URL
+                  key: latest
+            - name: SUPABASE_SERVICE_ROLE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: SUPABASE_SERVICE_ROLE_KEY
+                  key: latest
+            - name: REVENUECAT_REST_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: REVENUECAT_REST_API_KEY
+                  key: latest

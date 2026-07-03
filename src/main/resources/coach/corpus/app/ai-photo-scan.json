@@ -1,0 +1,19 @@
+{
+  "id": "app/ai-photo-scan",
+  "title": "AI meal photo analysis in Fitzenia",
+  "section": "app",
+  "locale": "en",
+  "source_uri": "coach/corpus/app/ai-photo-scan.json",
+  "chunks": [
+    "Fitzenia can analyze a photo of your meal and automatically estimate its nutrition content using AI. Take a photo of your plate, and the app identifies the foods present, estimates portion sizes, and returns calories and macros — no manual database searching required.",
+    "AI photo scan is a Premium feature. To use it, add to a meal and choose 'AI Camera' to take a new photo or 'AI Photo' to pick one from your library. Before sending, an on-device check confirms the image actually contains food and asks you to retake if it doesn't. The AI then analyzes the image and returns a structured nutrition estimate within a few seconds.",
+    "The AI photo scan is powered by Google Gemini, which can recognize hundreds of different foods, dishes, and cuisines. It works best with clearly visible, well-lit plates. Foods that are hidden under sauces, mixed together, or obscured by garnishes may be estimated with lower accuracy.",
+    "When analyzing a photo, you can optionally provide a meal title (e.g., 'chicken caesar salad') and additional context (e.g., 'restaurant portion, no croutons'). This extra context improves the accuracy of the AI estimate by anchoring the analysis to the specific dish.",
+    "The AI photo scan returns a structured result that includes: a list of identified food items, estimated weights or portions for each item, and total calories, protein, carbs, and fat for the meal. You can review and edit these values before logging the meal to your diary.",
+    "AI photo analysis is an estimate, not a precise measurement. Accuracy varies depending on image clarity, portion size estimation, and the complexity of the dish. Mixed dishes, restaurant meals, and home-cooked meals with unknown recipes typically have more uncertainty than simple single-ingredient foods.",
+    "After the AI returns its estimate, Fitzenia shows a confidence indicator. For results with lower confidence, the app suggests reviewing each food item and adjusting the portion sizes. You can tap any identified food item to edit the amount or replace it with a more accurate database match.",
+    "The AI photo scan works for individual food items (e.g., a single apple, a chicken breast) as well as complex plated meals (e.g., a plate of pasta with meat sauce and vegetables). For buffet plates or deconstructed meals, the AI attempts to identify each component separately.",
+    "Streaming analysis: the photo scan endpoint sends results progressively. As the AI identifies each component of the meal, Fitzenia displays partial results in real time so you don't have to wait for the full analysis to complete before reviewing the first items.",
+    "If the AI scan returns clearly wrong results (e.g., identifies a banana as a mango, or estimates 2000 kcal for a small salad), use the manual correction flow to adjust. Your corrections are used to improve the logging accuracy but are not sent to a training system — your food diary data stays private."
+  ]
+}

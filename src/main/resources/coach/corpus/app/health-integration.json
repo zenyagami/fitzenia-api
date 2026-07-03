@@ -1,0 +1,17 @@
+{
+  "id": "app/health-integration",
+  "title": "Health Connect and Apple Health integration in Fitzenia",
+  "section": "app",
+  "locale": "en",
+  "source_uri": "coach/corpus/app/health-integration.json",
+  "chunks": [
+    "Fitzenia can connect to your phone's health platform — Health Connect on Android or Apple Health on iOS — to share data both ways. This lets the app pull in activity and weight you record elsewhere, and write your nutrition and workouts back so your health platform stays complete. Connecting is optional; the app works fully without it.",
+    "From your health platform, Fitzenia can read steps, active calories burned, total calories burned, exercise/workout sessions, weight entries (including your latest weigh-in), and body-composition data such as body fat. Your daily step count from this connection appears on the Dashboard.",
+    "Fitzenia can write back to your health platform too: the nutrition (calories and macros) you log in the diary, exercise sessions, and weight entries you record in the app. That way a single source — your phone's health app — reflects data from Fitzenia and your other apps and devices.",
+    "You're first offered the health connection during onboarding, at the Health step: connect once and Fitzenia pulls your latest weight automatically so you don't have to type it. You can skip this step and enter your weight manually, and connect later instead.",
+    "To manage the connection after onboarding, go to My Page → Settings → Data Sources. There you can see which data is linked and review the sources feeding your weight and activity. Permissions themselves are granted through the system dialog (Health Connect on Android, Apple Health's authorization screen on iOS).",
+    "Weight syncs from your health platform into Fitzenia automatically after sign-in, so weigh-ins recorded on a connected scale or another app show up in your weight log and feed your trend and adaptive TDEE. If you edit a weight that originated from your health app, Fitzenia changes only its own copy — it does not modify the original health record, and future syncs won't overwrite your edit.",
+    "Platform differences: on Android the integration uses Health Connect and writes nutrition as a single record; on iOS it uses Apple Health (HealthKit) and writes food as a correlation of nutrient samples. Some body metrics like bone or water mass are available on Android but not on iOS, so those fields may be empty on iPhone.",
+    "If health data isn't appearing, check that you granted Fitzenia permission in Health Connect / Apple Health (permissions are per-data-type, so steps, weight, and nutrition are each allowed separately), that your other apps or device are actually writing to the health platform, and that the connection is enabled under My Page → Settings → Data Sources. You can always fall back to logging weight and food manually in the app."
+  ]
+}

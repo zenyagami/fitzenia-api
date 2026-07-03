@@ -1,0 +1,16 @@
+{
+  "id": "training/rep-ranges",
+  "title": "Rep ranges for strength, size, and endurance",
+  "section": "training",
+  "locale": "en",
+  "source_uri": "coach/corpus/training/rep-ranges.json",
+  "chunks": [
+    "Rep ranges describe how many repetitions you do per set, and they shift the emphasis of your training. Roughly: 1–5 reps emphasizes maximal strength, 6–15 reps is the classic hypertrophy zone, and 15–30+ reps builds muscular endurance. The boundaries overlap a lot.",
+    "For building muscle, what matters most is taking sets close to failure — not the exact rep number. Research shows muscle grows well across a wide range, from about 5 up to 30 reps, as long as the set is hard. The 6–15 range is popular simply because it is efficient and joint-friendly.",
+    "Lower reps with heavier weight (3–6) are excellent for building strength and are most relevant for big compound lifts. They are demanding on joints and the nervous system, so they are usually programmed with longer rest and fewer total sets per session.",
+    "Higher reps (15–30) with lighter weight build muscle just as well when taken near failure, and they are gentler on the joints — useful for isolation work, rehab-adjacent training, or movements where heavy loading is awkward. The downside is they are more uncomfortable and fatiguing to push to failure.",
+    "A balanced approach uses heavier compound work in the 5–10 range for strength and efficiency, plus isolation work in the 10–20 range for volume and a strong muscle connection. Varying rep ranges also keeps training joints fresh and reduces monotony.",
+    "Match the rep range to the exercise. Save the lowest, heaviest reps for stable compound lifts you can load safely; use moderate-to-high reps for isolation and machine work where chasing a heavy single-rep max adds risk without extra benefit.",
+    "Whatever range you choose, apply progressive overload within it and take the working sets close to failure. The rep range is a tool; effort and progression are what actually build the muscle."
+  ]
+}

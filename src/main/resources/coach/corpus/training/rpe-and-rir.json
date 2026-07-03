@@ -1,0 +1,16 @@
+{
+  "id": "training/rpe-and-rir",
+  "title": "RPE and RIR: training close to failure on purpose",
+  "section": "training",
+  "locale": "en",
+  "source_uri": "coach/corpus/training/rpe-and-rir.json",
+  "chunks": [
+    "RIR means 'reps in reserve' — how many more reps you could have done before failing. RPE means 'rate of perceived exertion,' usually on a 1–10 scale where 10 is true failure. They are two ways of describing the same thing: how hard a set was. RPE 8 is roughly 2 reps in reserve.",
+    "Most hypertrophy training should sit around 1–3 reps in reserve (RPE 7–9). This is close enough to failure to drive growth while leaving enough in the tank to keep good technique, recover between sets, and accumulate quality volume across the workout.",
+    "Training to absolute failure (0 RIR / RPE 10) on every set is rarely necessary and adds a lot of fatigue. Occasional failure on the last set of an isolation exercise is fine, but doing it constantly on compound lifts hurts recovery and your next sets more than it helps.",
+    "Autoregulation means using RPE/RIR to adjust your training to how you feel that day. On a strong day you might add a little weight to hit your target RIR; on a tired day you might use less. This keeps the stimulus appropriate even when life, sleep, and stress vary.",
+    "Judging RIR is a skill that improves with experience. Beginners often think they are closer to failure than they are, leaving 5+ reps in reserve while believing it was hard. Occasionally taking a set to true failure calibrates your sense of what 1–2 RIR actually feels like.",
+    "Use RIR to guide progression: if a weight that used to be RPE 9 now feels like RPE 7, that is your cue to add reps or load. Tracking how hard your sets feel, not just the numbers, gives a fuller picture of progress.",
+    "Bigger compound lifts like squats and deadlifts are usually kept a touch further from failure (around 2–3 RIR) for safety and recovery, while smaller isolation moves can be pushed closer (0–1 RIR) with little downside."
+  ]
+}

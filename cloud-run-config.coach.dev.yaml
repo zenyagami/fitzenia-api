@@ -1,0 +1,75 @@
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: fitzenia-coach-dev
+  labels:
+    cloud.googleapis.com/location: europe-north1
+  annotations:
+    run.googleapis.com/ingress: all
+spec:
+  template:
+    metadata:
+      annotations:
+        run.googleapis.com/execution-environment: gen2
+        run.googleapis.com/cpu: "2"
+        run.googleapis.com/memory: "1Gi"
+        run.googleapis.com/cpu-throttling: "false"
+        autoscaling.knative.dev/minScale: "0"
+        autoscaling.knative.dev/maxScale: "3"
+        run.googleapis.com/timeout: "300s"
+        run.googleapis.com/healthcheck-path: /health
+    spec:
+      containerConcurrency: 20
+      timeoutSeconds: 300
+      containers:
+      - name: fitzenia-coach-dev
+        image: gcr.io/PROJECT_ID/fitzenia-coach-dev:IMAGE_TAG
+        ports:
+        - name: http1
+          containerPort: 8080
+        env:
+        - name: APP_ENVIRONMENT
+          value: "DEVELOPMENT"
+        - name: GEMINI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: GEMINI_API_KEY
+              key: latest
+        - name: SUPABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: SUPABASE_URL
+              key: latest
+        - name: SUPABASE_PUBLISHABLE_KEY
+          valueFrom:
+            secretKeyRef:
+              name: SUPABASE_PUBLISHABLE_KEY
+              key: latest
+        - name: SUPABASE_JWT_VERIFICATION_MODE
+          value: "JWKS"
+        - name: SUPABASE_SERVICE_ROLE_KEY
+          valueFrom:
+            secretKeyRef:
+              name: SUPABASE_SERVICE_ROLE_KEY
+              key: latest
+        # Optional dev-only bypass. Keep false while testing RevenueCat, otherwise
+        # coach access will work even without a user_entitlement row.
+        - name: COACH_DEV_PREMIUM_ALL
+          value: "false"
+        - name: COACH_DEV_PREMIUM_USER_IDS
+          value: ""
+        resources:
+          limits:
+            cpu: "2"
+            memory: "1Gi"
+          requests:
+            cpu: "1"
+            memory: "512Mi"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3

@@ -1,0 +1,19 @@
+{
+  "id": "recipes/vegetarian-and-vegan",
+  "title": "High-protein vegetarian and vegan meals",
+  "section": "recipes",
+  "locale": "en",
+  "source_uri": "coach/corpus/recipes/vegetarian-and-vegan.json",
+  "chunks": [
+    "Tempeh & Veggie Stir-Fry (vegan, dairy-free). Stir-fry 150 g tempeh with broccoli, peppers, and a soy-ginger sauce; serve over 100 g cooked rice. Serves 1. Per serving: ~520 kcal, 32 g protein, 52 g carbs, 18 g fat. Tags: vegan, dairy-free, high-protein, high-fiber.",
+    "Lentil Bolognese (vegan, gluten-free option). Simmer 150 g cooked lentils with tomatoes, onion, garlic, and herbs; serve over 120 g cooked pasta. Serves 1. Per serving: ~500 kcal, 24 g protein, 88 g carbs, 6 g fat. Tags: vegan, high-fiber, meal-prep.",
+    "Chickpea Spinach Curry (vegan, gluten-free). Simmer 200 g chickpeas with spinach in a tomato-coconut sauce; serve with 80 g cooked rice. Serves 1. Per serving: ~520 kcal, 20 g protein, 70 g carbs, 17 g fat. Tags: vegan, gluten-free, dairy-free, high-fiber.",
+    "Halloumi & Grain Bowl (vegetarian, gluten-free). Pan-fry 80 g halloumi and serve over 100 g cooked bulgur or quinoa with roasted vegetables and lemon. Serves 1. Per serving: ~520 kcal, 27 g protein, 46 g carbs, 26 g fat. Tags: vegetarian, gluten-free, high-protein.",
+    "Tofu Poke Bowl (vegan, gluten-free). Toss 200 g firm tofu in soy-sesame marinade; serve over 100 g rice with edamame, cucumber, carrot, and avocado. Serves 1. Per serving: ~540 kcal, 28 g protein, 58 g carbs, 22 g fat. Tags: vegan, gluten-free, dairy-free, high-protein.",
+    "Black Bean Burgers (vegan, meal-prep). Mash 150 g black beans with oats, onion, and spices; form patties and bake; serve in a wholegrain bun with salad. Serves 1 (1 burger). Per serving: ~410 kcal, 18 g protein, 62 g carbs, 9 g fat. Tags: vegan, high-fiber, meal-prep.",
+    "Paneer Tikka Bowl (vegetarian, gluten-free). Roast 120 g paneer marinated in yogurt and spices; serve with 80 g rice and cucumber salad. Serves 1. Per serving: ~520 kcal, 28 g protein, 44 g carbs, 26 g fat. Tags: vegetarian, gluten-free, high-protein.",
+    "Quinoa & Roasted Veg Bowl (vegan, gluten-free). Combine 100 g cooked quinoa, roasted chickpeas, sweet potato, kale, and tahini dressing. Serves 1. Per serving: ~490 kcal, 18 g protein, 64 g carbs, 18 g fat. Tags: vegan, gluten-free, dairy-free, high-fiber.",
+    "Soy Curl Burrito Bowl (vegan, high-protein). Cook 60 g rehydrated soy curls with taco spices; serve over 100 g rice with black beans, corn, and salsa. Serves 1. Per serving: ~520 kcal, 34 g protein, 76 g carbs, 8 g fat. Tags: vegan, dairy-free, high-protein, high-fiber, meal-prep.",
+    "Egg & Veggie Frittata (vegetarian, gluten-free, meal-prep). Bake 4 eggs whisked with spinach, peppers, onion, and 30 g cheese in a small pan or muffin tin. Serves 2. Per serving: ~280 kcal, 21 g protein, 8 g carbs, 19 g fat. Tags: vegetarian, gluten-free, low-carb, high-protein, meal-prep."
+  ]
+}

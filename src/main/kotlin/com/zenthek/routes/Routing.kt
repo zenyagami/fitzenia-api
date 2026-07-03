@@ -4,9 +4,12 @@ import com.zenthek.auth.SUPABASE_AUTH_PROVIDER
 import com.zenthek.auth.requireAuthenticatedUser
 import com.zenthek.auth.requireBearerAccessToken
 import com.zenthek.model.AnalyzeImageRequest
+import com.zenthek.model.ErrorResponse
 import com.zenthek.model.ImageAnalysisResponse
 import com.zenthek.model.ImageAnalyzer
 import com.zenthek.model.RegisterUserRequest
+import com.zenthek.revenuecat.RevenueCatSyncService
+import com.zenthek.revenuecat.WebhookAck
 import com.zenthek.service.AccountService
 import com.zenthek.service.AiProgressProjectionService
 import com.zenthek.service.DeleteLadderResult
@@ -38,6 +41,8 @@ object RateLimitNames {
     const val IMAGE_ANALYSIS = "image-analysis"
     const val ACCOUNT = "account"
     const val PROGRESS_PROJECTION = "progress-projection"
+    const val COACH_MESSAGE = "coach-message"
+    const val COACH_MANAGEMENT = "coach-management"
 }
 
 private val sseJson = Json { ignoreUnknownKeys = true }
@@ -86,10 +91,31 @@ fun Application.configureRouting(
     userProfileService: UserProfileService,
     accountService: AccountService,
     aiProgressProjectionService: AiProgressProjectionService,
+    revenueCatSync: RevenueCatSyncService?,
 ) {
     routing {
         get("/health") {
             call.respond(HttpStatusCode.OK, mapOf("status" to "ok"))
+        }
+
+        // RevenueCat entitlement webhook. Public — RevenueCat authenticates with a
+        // static value in the Authorization header (constant-time compared inside the service),
+        // not a user JWT, so it sits OUTSIDE authenticate(SUPABASE_AUTH_PROVIDER). null service =
+        // the REVENUECAT_* secrets aren't wired → 503.
+        post("/webhooks/revenuecat") {
+            if (revenueCatSync == null) {
+                call.respond(HttpStatusCode.ServiceUnavailable, ErrorResponse("RevenueCat webhook not configured"))
+                return@post
+            }
+            val authHeader = call.request.headers[HttpHeaders.Authorization]
+            val rawBody = call.receiveText()
+            when (revenueCatSync.handleWebhook(authHeader, rawBody)) {
+                WebhookAck.OK -> call.respond(HttpStatusCode.OK, mapOf("status" to "ok"))
+                WebhookAck.UNAUTHORIZED -> call.respond(HttpStatusCode.Unauthorized, ErrorResponse("Unauthorized"))
+                WebhookAck.BAD_REQUEST -> call.respond(HttpStatusCode.BadRequest, ErrorResponse("Bad request"))
+                // 5xx so RevenueCat redelivers; the 5-min sweeper is the fallback.
+                WebhookAck.RETRY -> call.respond(HttpStatusCode.InternalServerError, ErrorResponse("Sync failed"))
+            }
         }
 
         // Public attribution endpoint. Open Food Facts data is licensed under

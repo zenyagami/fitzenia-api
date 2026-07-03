@@ -1,0 +1,19 @@
+{
+  "id": "app/macro-targets",
+  "title": "Macronutrient targets in Fitzenia (protein, carbs, fat)",
+  "section": "app",
+  "locale": "en",
+  "source_uri": "coach/corpus/app/macro-targets.json",
+  "chunks": [
+    "Macronutrients (macros) are the three main categories of nutrients that provide calories: protein (4 kcal/g), carbohydrates (4 kcal/g), and fat (9 kcal/g). Fitzenia tracks all three and shows your daily targets and remaining amounts in the diary and dashboard.",
+    "Fitzenia calculates your macro targets based on your goal phase, body weight, and total calorie budget. The targets are displayed as grams (e.g., 160g protein, 220g carbs, 60g fat) and as percentages of your total calories on the macro breakdown chart.",
+    "Protein is the most important macro for body composition. It supports muscle repair and growth, keeps you satiated, and has the highest thermic effect (your body burns about 20–30% of protein calories just digesting it). Fitzenia targets protein at 1.6–2.4 g per kg of body weight, depending on your phase.",
+    "During a Cut, Fitzenia sets protein at the higher end (2.0–2.4 g/kg) to protect muscle mass while in a calorie deficit. During a Bulk, protein is typically set at 1.6–2.0 g/kg — still high, but with more room for carbohydrates to fuel training. For Maintenance and Recomp, the target is 1.8–2.2 g/kg.",
+    "Carbohydrates are your body's preferred energy source, especially for high-intensity exercise. Fitzenia allocates the remaining calories (after protein and fat) to carbs, prioritizing higher carb intake for people with active training schedules. Carbs are not the enemy — they fuel performance and support thyroid function during a diet.",
+    "Fat is essential for hormone production (including testosterone and estrogen), cell membrane health, fat-soluble vitamin absorption (A, D, E, K), and joint lubrication. Fitzenia sets a fat floor of approximately 0.7–1.0 g/kg of body weight to ensure adequate hormonal health, especially during a cut.",
+    "To customize your macro split, go to My Page → Edit Macros. You can start from a preset (Balanced, High Protein, or Low Carb) or set your own distribution across protein, carbs, and fat. Fitzenia keeps the split tied to your daily calorie budget so the macros add up.",
+    "Fiber is a type of carbohydrate that Fitzenia tracks separately. Adequate fiber (25–35 g/day) supports digestive health, reduces cholesterol, and increases satiety. Fitzenia shows fiber intake on the nutrition details screen. High-fiber foods include vegetables, legumes, oats, and whole grains.",
+    "Net carbs (total carbs minus fiber) are sometimes used by people following low-carb or ketogenic diets. Fitzenia displays both total carbs and fiber, so you can calculate net carbs yourself. The app does not have a dedicated keto mode, but you can manually set a very low carb target in the macro settings.",
+    "You can log fiber, sugar, sodium, and saturated fat alongside macros in Fitzenia. These micronutrients are pulled from the food database and displayed in the nutrition details for each food item and in the daily summary. Tracking sodium is especially useful if you are managing blood pressure or water retention."
+  ]
+}

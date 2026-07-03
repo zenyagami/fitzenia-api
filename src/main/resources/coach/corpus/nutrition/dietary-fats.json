@@ -1,0 +1,16 @@
+{
+  "id": "nutrition/dietary-fats",
+  "title": "Dietary fat: why you need it and how much",
+  "section": "nutrition",
+  "locale": "en",
+  "source_uri": "coach/corpus/nutrition/dietary-fats.json",
+  "chunks": [
+    "Dietary fat is essential. It supports hormone production (including testosterone and estrogen), helps absorb fat-soluble vitamins A, D, E, and K, builds cell membranes, and keeps skin and joints healthy. Cutting fat too low can blunt hormones, mood, and recovery, so fat should always have a floor in your diet.",
+    "Set a fat floor of roughly 0.5–0.8 g per kg of body weight per day, or about 20–35% of total calories. Most people feel and perform best toward the middle of that range. Even in an aggressive cut, do not drop below the floor for extended periods.",
+    "Unsaturated fats — found in olive oil, avocado, nuts, seeds, and fatty fish — support heart health and should make up most of your fat intake. Omega-3 fats (from salmon, sardines, mackerel, walnuts, flax, and chia) are especially valuable for reducing inflammation and supporting recovery.",
+    "Saturated fat — in fatty meat, butter, full-fat dairy, and coconut oil — is fine in moderation. A common guideline is to keep it under about 10% of total calories while favoring unsaturated sources. You do not need to avoid it entirely.",
+    "Fat is the most calorie-dense macro at about 9 kcal per gram, so small amounts add up fast. A tablespoon of oil is roughly 120 kcal, and a handful of nuts can be 150–200 kcal. Measuring high-fat foods (oils, nut butters, cheese) is one of the easiest ways to keep calories accurate.",
+    "Because fat is so calorie-dense, it is an easy lever when you need to fit a meal into your targets: trimming added oils and high-fat toppings frees up calories for more food volume, while adding a drizzle of olive oil is an easy way to bump calories in a lean bulk.",
+    "If you have a diagnosed heart condition, high cholesterol, or another medical concern, talk to your doctor or a registered dietitian about the right fat sources and amounts for you."
+  ]
+}

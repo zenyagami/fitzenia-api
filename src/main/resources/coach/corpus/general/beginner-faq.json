@@ -1,0 +1,16 @@
+{
+  "id": "general/beginner-faq",
+  "title": "Beginner FAQ: common questions when starting out",
+  "section": "general",
+  "locale": "en",
+  "source_uri": "coach/corpus/general/beginner-faq.json",
+  "chunks": [
+    "Can I lose fat and build muscle at the same time? As a beginner, yes — this is the ideal window for body recomposition. Eat around maintenance calories with high protein (1.6–2.2 g/kg) and train consistently. Progress shows more in the mirror and measurements than on the scale.",
+    "Do I need to lift weights to lose weight? You lose weight through a calorie deficit, with or without lifting. But resistance training is what tells your body to keep muscle while losing fat, so you lose fat rather than a mix of fat and muscle — and end up looking leaner and stronger.",
+    "How often should I weigh myself? Daily weigh-ins (same time, after waking, after the bathroom) work well if you track the weekly average and ignore single-day swings. If daily weighing causes stress, weighing 2–3 times a week and averaging is just as useful.",
+    "Are carbs bad? No. Carbs are not fattening on their own — excess total calories cause fat gain regardless of source. Carbs fuel training and recovery, and complex, fiber-rich carbs are a valuable part of most diets. There is no need to fear them.",
+    "Do I need supplements? No supplement is required. A solid diet, training, and sleep do the heavy lifting. A few have decent evidence (protein powder for convenience, creatine for strength, vitamin D if deficient), but they are minor compared to consistency with the basics.",
+    "Why is the scale up after a hard workout or salty meal? Almost always water, not fat. New training, sore muscles, high sodium, more carbs, stress, and poor sleep all hold water temporarily. It clears on its own — judge progress by multi-week trends, not daily readings.",
+    "How long until I see results? You will often feel changes (energy, strength, clothes fitting) before you see dramatic ones. Visible changes usually take several weeks to a few months of consistency. Trust the process, focus on the habits, and let time do its work."
+  ]
+}

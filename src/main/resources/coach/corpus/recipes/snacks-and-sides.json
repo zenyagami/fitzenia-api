@@ -1,0 +1,19 @@
+{
+  "id": "recipes/snacks-and-sides",
+  "title": "High-protein snacks and sides",
+  "section": "recipes",
+  "locale": "en",
+  "source_uri": "coach/corpus/recipes/snacks-and-sides.json",
+  "chunks": [
+    "Greek Yogurt & Berries (vegetarian, no-cook). Top 170 g non-fat Greek yogurt with 80 g berries and 1 tsp honey. Serves 1. Per serving: ~180 kcal, 18 g protein, 22 g carbs, 1 g fat. Tags: vegetarian, no-cook, high-protein, quick.",
+    "Cottage Cheese & Pineapple (vegetarian, no-cook). Combine 150 g low-fat cottage cheese with 80 g pineapple chunks. Serves 1. Per serving: ~170 kcal, 20 g protein, 16 g carbs, 3 g fat. Tags: vegetarian, no-cook, high-protein, quick.",
+    "Protein Energy Balls (vegetarian, no-bake, meal-prep). Mix 60 g oats, 1 scoop (30 g) whey, 1 tbsp peanut butter, and a little honey; roll into 4 balls and chill. Per ball: ~110 kcal, 7 g protein, 11 g carbs, 4 g fat. Tags: vegetarian, no-bake, high-protein, on-the-go, meal-prep.",
+    "Edamame with Sea Salt (vegan, gluten-free). Steam 150 g edamame in pods and sprinkle with sea salt. Serves 1. Per serving: ~160 kcal, 14 g protein, 12 g carbs, 6 g fat. Tags: vegan, gluten-free, dairy-free, high-fiber, high-protein.",
+    "Hummus & Veggie Sticks (vegan, gluten-free). Serve 60 g hummus with carrot, cucumber, and pepper sticks. Serves 1. Per serving: ~210 kcal, 7 g protein, 22 g carbs, 11 g fat. Tags: vegan, gluten-free, high-fiber, no-cook.",
+    "Tuna Cucumber Bites (gluten-free, low-carb, no-cook). Top thick cucumber slices with mashed tuna mixed with light mayo and lemon. Serves 1. Per serving: ~190 kcal, 26 g protein, 6 g carbs, 7 g fat. Tags: gluten-free, low-carb, high-protein, no-cook.",
+    "Roasted Chickpeas (vegan, gluten-free, meal-prep). Toss 120 g chickpeas with 1 tsp olive oil and spices; roast at 200 C until crisp. Serves 1. Per serving: ~230 kcal, 11 g protein, 30 g carbs, 8 g fat. Tags: vegan, gluten-free, high-fiber, crunchy.",
+    "Apple with Peanut Butter (vegan, gluten-free, no-cook). Slice 1 apple and serve with 1 tbsp natural peanut butter. Serves 1. Per serving: ~210 kcal, 5 g protein, 28 g carbs, 9 g fat. Tags: vegan, gluten-free, quick, no-cook.",
+    "Chocolate Protein Mug Cake (vegetarian). Microwave a batter of 1 scoop (30 g) whey, 1 tbsp cocoa, 1 egg, and a splash of milk for ~60 seconds. Serves 1. Per serving: ~250 kcal, 32 g protein, 12 g carbs, 8 g fat. Tags: vegetarian, high-protein, dessert, quick.",
+    "Garlic Roasted Broccoli (vegan, gluten-free, side). Toss 200 g broccoli with 1 tsp olive oil, garlic, and salt; roast at 200 C until charred. Serves 1. Per serving: ~120 kcal, 8 g protein, 14 g carbs, 5 g fat. Tags: vegan, gluten-free, high-fiber, low-calorie, side."
+  ]
+}

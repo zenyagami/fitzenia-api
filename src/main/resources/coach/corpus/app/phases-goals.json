@@ -1,0 +1,19 @@
+{
+  "id": "app/phases-goals",
+  "title": "Fitness phases and goal setting in Fitzenia",
+  "section": "app",
+  "locale": "en",
+  "source_uri": "coach/corpus/app/phases-goals.json",
+  "chunks": [
+    "Fitzenia works in nutrition phases: Cut (fat loss), Bulk (muscle gain), Maintenance (hold weight), Recomposition (lose fat and gain muscle at once), and Reverse (gradually raising calories back toward maintenance after a cut). When you set up your goal you pick a direction — Lose fat, Maintain, Gain muscle, or Body recomp — and Fitzenia maps it to the matching phase and adjusts your calorie and macro targets.",
+    "A Cut means eating in a calorie deficit to lose body fat. Fitzenia targets a moderate deficit (roughly 300–500 kcal/day below your maintenance) for sustainable fat loss, and keeps protein high (about 1.8–2.4 g/kg of body weight) to preserve lean muscle while you lose fat.",
+    "A Bulk (Gain muscle) means eating in a calorie surplus to support muscle growth. Fitzenia favors a lean surplus (roughly 150–300 kcal/day above maintenance). Protein stays high (about 1.6–2.2 g/kg) while carbohydrates increase to fuel training and replenish glycogen.",
+    "Maintenance is eating at your maintenance calories to hold your current weight. It's useful after a successful cut to consolidate results, or when you want to focus on performance and overall health rather than changing body composition.",
+    "Body Recomposition (Recomp) means losing fat and gaining muscle simultaneously. It works best for beginners, people returning after a break, or those with higher body fat. Recomp sits close to maintenance (a slight deficit or maintenance) with high protein (about 2.0–2.4 g/kg) and progressive resistance training.",
+    "Reverse is the bridge out of a cut: calories are raised gradually back toward maintenance to help restore hormones, metabolic rate, and energy while limiting fat regain. Fitzenia's adaptive plan may recommend a reverse or maintenance period after an extended deficit rather than jumping straight back to maintenance.",
+    "To set or change your goal, go to My Page → Edit Goal. You can update your goal direction, target weight, and weekly pace. Fitzenia recalculates your calorie target right after you save. To adjust how those calories split across protein, carbs, and fat, use My Page → Edit Macros.",
+    "Your goal weight is the weight you're working toward. Combined with your current weight and chosen pace, Fitzenia works out the daily calorie adjustment needed. For example, losing about 5 kg over 10 weeks implies roughly a 500 kcal/day deficit.",
+    "Weekly pace is how fast you want to progress. Fitzenia suggests around 0.3–0.7 kg/week for a cut and 0.1–0.3 kg/week for a bulk. Faster rates risk more muscle loss on a cut or more fat gain on a bulk; slower rates are more sustainable and better for body composition.",
+    "If your weight isn't moving after 2+ weeks of consistent tracking, the most common cause is logging accuracy — underestimated portions, untracked cooking oils, or forgotten liquid calories. Because Fitzenia's targets adapt to your real intake-and-weight data over time, the best fix is to keep logging consistently; you can also nudge your target by 100–200 kcal and watch the trend for another couple of weeks."
+  ]
+}

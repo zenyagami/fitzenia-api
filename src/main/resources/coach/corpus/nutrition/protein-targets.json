@@ -1,0 +1,17 @@
+{
+  "id": "nutrition/protein-targets",
+  "title": "How much protein you need for a cut, bulk, or maintenance",
+  "section": "nutrition",
+  "locale": "en",
+  "source_uri": "coach/corpus/nutrition/protein-targets.json",
+  "chunks": [
+    "For body composition, aim for roughly 1.6–2.2 g of protein per kg of body weight per day. The middle of that range (about 1.8–2.0 g/kg) works well for most people who lift weights. Going much above 2.2 g/kg offers little extra muscle-building benefit for most people but is not harmful for healthy individuals.",
+    "During a calorie deficit (a cut), protein needs are at the higher end — about 2.0–2.4 g/kg of body weight, or up to 2.3–3.1 g/kg of lean mass if you carry higher body fat. Extra protein in a cut protects muscle and keeps hunger down, since protein is the most filling macronutrient.",
+    "For maintenance or a lean bulk, 1.6–2.0 g/kg is plenty. Muscle is built from a combination of training stimulus and a slight calorie surplus; protein above your needs does not accelerate growth once the requirement is met.",
+    "If you are significantly overweight, base protein on a target or 'goal' body weight rather than current weight, because you do not need to feed protein to fat mass. For example, a heavier person aiming for 80 kg might target protein around 1.8–2.2 g per kg of that 80 kg goal weight.",
+    "Spread protein across 3–5 meals of roughly 0.4 g/kg each (often 30–50 g per meal) to maximize the muscle-building signal through the day. That said, total daily protein matters most — if your schedule only allows 2–3 meals, hitting your daily target still drives the majority of the benefit.",
+    "High-quality protein sources include chicken, turkey, lean beef, fish, eggs, Greek yogurt, cottage cheese, milk, whey or casein powder, tofu, tempeh, edamame, lentils, and beans. Animal sources are 'complete' (all essential amino acids); combining varied plant sources across the day covers the same bases for vegetarians and vegans.",
+    "Protein powder is a convenience, not a requirement — it is just food in powdered form. Whole-food protein and supplemental protein build muscle equally well. Use powder when whole food is impractical or when you struggle to hit your target.",
+    "Most healthy people tolerate higher-protein diets without issue, and protein does not harm healthy kidneys. If you have a diagnosed kidney condition or another medical concern, talk to your doctor or a registered dietitian before raising protein intake."
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "id": "app/barcode-food-search",
+  "title": "Barcode scanning and food search in Fitzenia",
+  "section": "app",
+  "locale": "en",
+  "source_uri": "coach/corpus/app/barcode-food-search.json",
+  "chunks": [
+    "Fitzenia can identify packaged foods by scanning their barcode. On the Dashboard, add to the meal you want and choose the barcode scanner, then point your camera at the barcode on the packaging. The app queries multiple food databases to find the nutritional information for that product.",
+    "Fitzenia's barcode lookup checks fast local mirrors of Open Food Facts and USDA first to avoid a slow network call, then queries the live databases. For users in the US it tries USDA FoodData Central first and falls back to Open Food Facts; elsewhere it tries Open Food Facts first and falls back to USDA. Open Food Facts is a global community-maintained database with millions of packaged products; USDA FDC has comprehensive data on US foods.",
+    "Open Food Facts (OFF) is a collaborative, open-source food database contributed to by volunteers worldwide. It covers products sold in over 160 countries. If a product is not found via barcode scan, you can contribute by adding it directly on the Open Food Facts website or app.",
+    "USDA FoodData Central (FDC) is the US government's food nutrition database. It covers branded US grocery products, foundation foods (basic unprocessed foods like meat and vegetables), and standard reference foods. Fitzenia uses FDC as a fallback for barcodes not found in Open Food Facts.",
+    "If a barcode is not found in either database, Fitzenia will show 'Product not found'. In this case, you can search for the product by name using the text search, or log it manually by entering the nutrition information from the product label.",
+    "For food text search, add to a meal and type in the search bar. Fitzenia's Smart Search queries its canonical catalog (a curated database of verified food items) and the Open Food Facts and USDA databases in parallel. If the catalog already has a good match it returns that; otherwise AI classifies the upstream hits and, when no good match exists, generates a best-match food item grounded in the upstream nutrition data.",
+    "Smart Search uses AI (Google Gemini) to rank results and, when no good match exists, generate a best-match food item based on nutritional data from multiple sources. The best match is labeled clearly so you know whether it comes from the verified catalog, a database, or AI generation.",
+    "The autocomplete in the search bar shows suggestions as you type, powered by the Open Food Facts database. These suggestions help you find common foods quickly without pressing search. Tap a suggestion to go directly to its nutrition details and portion selector.",
+    "When you find a food item via search or barcode, Fitzenia shows a detail screen with: serving size options, a portion adjuster (you can type a custom amount in grams or pieces), and the full nutrition breakdown. Add it to log it to the meal you chose (Breakfast, a snack, Lunch, or Dinner).",
+    "Fitzenia shows the source of each food item (Open Food Facts, USDA, or AI-generated) in small text below the food name. This transparency helps you assess data quality. USDA and verified catalog items generally have more accurate data than community-contributed OFF entries or AI-generated entries."
+  ]
+}

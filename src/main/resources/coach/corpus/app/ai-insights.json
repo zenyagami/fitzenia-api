@@ -1,0 +1,17 @@
+{
+  "id": "app/ai-insights",
+  "title": "On-device AI Insights in Fitzenia (vs. the AI Coach)",
+  "section": "app",
+  "locale": "en",
+  "source_uri": "coach/corpus/app/ai-insights.json",
+  "chunks": [
+    "AI Insights are short, plain-language summaries Fitzenia generates about your own data — for example highlighting a pattern in your logging, your calorie trend, or your weight movement. They appear as an insight card on the Dashboard and a few other surfaces, turning the numbers you already track into a quick read.",
+    "AI Insights run entirely on your device using its built-in on-device language model — Gemini Nano via Android's AI APIs, or Apple's Foundation Models on supported iPhones. Nothing about an insight is sent to a server to be generated: the model reads your local data and writes the summary on the phone, so this feature is private and works without the AI Coach subscription.",
+    "AI Insights and the AI Coach are different features. AI Insights are automatic, on-device, free narratives that appear in the app. The AI Coach is a Premium, server-side chat assistant you ask questions and that can pull in your data for a back-and-forth conversation. Don't confuse the two: a user without Premium can still see on-device AI Insights.",
+    "AI Insights are consent-gated. The first time, Fitzenia asks for your permission to generate personalized summaries from the data you already track; you can turn this on or off. Until you consent, insight cards stay off. You manage this under the app's settings alongside the other privacy controls.",
+    "On-device model availability has three states. Available means insights generate normally. Pending means the on-device model is still downloading or initializing — Gemini Nano in particular can take several minutes to download the first time — and Fitzenia shows a loading placeholder. Unavailable means the device or OS version can't run the model, so insight cards won't appear.",
+    "Because AI Insights are generated and cached locally per device, the wording you see can differ from one device to another even for the same data — that's expected. The insight cache is cleared when you sign out, and insights are regenerated as your data changes.",
+    "AI Insights are guidance and observations, not medical advice or precise prescriptions. Fitzenia deliberately keeps them to short, non-clinical summaries and filters the model's output so it doesn't make medical claims or prescribe exact gram amounts. Treat them as a helpful nudge toward your own trends, not a diagnosis.",
+    "If you don't see AI Insights: confirm you granted the insights consent in settings, give the on-device model time to finish downloading on first use (the card shows a loading state while it's Pending), and note that older or unsupported devices may not be able to run the on-device model at all. None of this affects your ability to log food or use the rest of the app."
+  ]
+}

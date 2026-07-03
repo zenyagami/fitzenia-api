@@ -1,0 +1,19 @@
+{
+  "id": "recipes/lunches",
+  "title": "High-protein lunch recipes",
+  "section": "recipes",
+  "locale": "en",
+  "source_uri": "coach/corpus/recipes/lunches.json",
+  "chunks": [
+    "Grilled Chicken & Quinoa Bowl (gluten-free, meal-prep). Combine 150 g grilled chicken breast, 100 g cooked quinoa, roasted vegetables, and a lemon-tahini drizzle. Serves 1. Per serving: ~480 kcal, 45 g protein, 42 g carbs, 14 g fat. Tags: gluten-free, high-protein, high-fiber, meal-prep.",
+    "Tuna & White Bean Salad (gluten-free, no-cook). Toss 1 can (120 g drained) tuna, 120 g cannellini beans, cherry tomatoes, red onion, and parsley with 1 tsp olive oil and lemon. Serves 1. Per serving: ~390 kcal, 38 g protein, 32 g carbs, 11 g fat. Tags: gluten-free, no-cook, high-protein, high-fiber, quick.",
+    "Turkey & Hummus Wrap (high-protein, quick). Fill a wholegrain wrap with 120 g sliced turkey breast, 2 tbsp hummus, spinach, grated carrot, and cucumber. Serves 1. Per serving: ~430 kcal, 38 g protein, 40 g carbs, 13 g fat. Tags: high-protein, quick, high-fiber, meal-prep.",
+    "Chicken Burrito Bowl (gluten-free, meal-prep). Layer 140 g grilled chicken, 100 g cooked rice, 80 g black beans, corn, salsa, and a spoon of Greek yogurt. Serves 1. Per serving: ~540 kcal, 46 g protein, 60 g carbs, 12 g fat. Tags: gluten-free, high-protein, high-fiber, meal-prep.",
+    "Lentil & Feta Salad (vegetarian, gluten-free). Mix 150 g cooked green lentils, 40 g feta, cherry tomatoes, cucumber, red onion, and a red-wine vinaigrette. Serves 1. Per serving: ~400 kcal, 24 g protein, 40 g carbs, 16 g fat. Tags: vegetarian, gluten-free, high-fiber, high-protein, no-cook.",
+    "Shrimp & Avocado Rice Bowl (gluten-free). Serve 150 g cooked shrimp over 100 g cooked rice with half an avocado, edamame, cucumber, and a soy-lime dressing. Serves 1. Per serving: ~470 kcal, 36 g protein, 48 g carbs, 15 g fat. Tags: gluten-free, high-protein, omega-3, meal-prep.",
+    "Chickpea Tuna-Style Salad (vegan option, gluten-free). Mash 150 g chickpeas with 1 tbsp light mayo or vegan mayo, diced celery, red onion, and lemon; serve on greens or wholegrain bread. Serves 1. Per serving: ~410 kcal, 18 g protein, 48 g carbs, 16 g fat. Tags: vegan-option, gluten-free-option, high-fiber, no-cook.",
+    "Beef & Broccoli Stir-Fry (dairy-free). Stir-fry 130 g lean beef strips with broccoli, peppers, and garlic in a light soy-ginger sauce; serve with 100 g cooked rice. Serves 1. Per serving: ~520 kcal, 40 g protein, 50 g carbs, 16 g fat. Tags: dairy-free, high-protein, meal-prep.",
+    "Caprese Chicken Salad (gluten-free, low-carb). Combine 150 g grilled chicken, 60 g fresh mozzarella, tomatoes, basil, and balsamic over mixed greens with 1 tsp olive oil. Serves 1. Per serving: ~420 kcal, 44 g protein, 10 g carbs, 22 g fat. Tags: gluten-free, low-carb, high-protein, quick.",
+    "Egg & Quinoa Power Salad (vegetarian, gluten-free). Toss 100 g cooked quinoa, 2 boiled eggs, roasted sweet potato, spinach, and pumpkin seeds with a mustard vinaigrette. Serves 1. Per serving: ~460 kcal, 24 g protein, 44 g carbs, 22 g fat. Tags: vegetarian, gluten-free, high-fiber, meal-prep."
+  ]
+}

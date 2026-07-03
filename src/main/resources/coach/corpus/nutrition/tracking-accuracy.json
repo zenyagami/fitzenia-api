@@ -1,0 +1,16 @@
+{
+  "id": "nutrition/tracking-accuracy",
+  "title": "Tracking food accurately: weighing, labels, and common errors",
+  "section": "nutrition",
+  "locale": "en",
+  "source_uri": "coach/corpus/nutrition/tracking-accuracy.json",
+  "chunks": [
+    "Accurate tracking is what turns a calorie target into real results. Most people who feel 'stuck' are not in the deficit they think they are because of small, repeated tracking errors. A food scale and honest logging fix the majority of those errors.",
+    "Weigh foods in grams rather than using cups or 'eyeballing' portions, especially for calorie-dense items like oils, nut butters, cheese, nuts, granola, rice, and pasta. Volume measures and visual estimates can be off by 30–50% or more, which is enough to erase an entire deficit.",
+    "Weigh calorie-dense foods raw when possible and use the raw entry, since cooking changes weight as water is gained or lost. For example, 100 g of raw rice is very different from 100 g of cooked rice. Pick one convention (raw or cooked) per food and stay consistent.",
+    "Log everything, including the small extras: cooking oil, sauces, dressings, drinks with calories, bites while cooking, and 'just one' snacks. These untracked extras commonly add 200–500 hidden calories a day.",
+    "Food labels are allowed a margin of error and 'serving sizes' are often smaller than what people actually eat. Always check whether a value is per serving or per 100 g, and weigh your actual portion rather than trusting the package's serving estimate.",
+    "Use verified database entries when logging in Fitzenia, and prefer scanning a barcode or choosing entries that match the actual product. Generic entries vary widely in quality; a quick sanity check of the calories and protein per 100 g catches bad data.",
+    "You do not need to track forever. Weighing and logging carefully for a few weeks builds the awareness and portion intuition that let you maintain results more loosely later. Tracking is a skill you can dial up when you need precision and ease off once habits are set."
+  ]
+}

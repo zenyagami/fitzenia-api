@@ -1,0 +1,19 @@
+{
+  "id": "app/calorie-adjustments",
+  "title": "Calorie adjustments, exercise calories, and troubleshooting targets in Fitzenia",
+  "section": "app",
+  "locale": "en",
+  "source_uri": "coach/corpus/app/calorie-adjustments.json",
+  "chunks": [
+    "Fitzenia's default calorie target is based on your TDEE (Total Daily Energy Expenditure) calculated from your profile data. This target is a starting estimate. The true test is how your weight responds over 2–4 weeks of consistent tracking — adjust from there, not from the calculator output.",
+    "Exercise calories in Fitzenia can be handled in two ways. If your activity level in your profile already reflects your training (e.g., you set 'Very Active' because you train 6 days a week), you should NOT add exercise calories back — they are already built into your TDEE. If your profile is set to 'Sedentary' and you log workouts separately, you may choose to eat back a portion of those calories.",
+    "Eating back exercise calories is a personal choice. Many people find that eating back 50% of estimated exercise calories works well — it accounts for the fact that calorie burn estimates from apps and wearables are often inflated by 20–50%. Experiment and see what rate of weight change you get.",
+    "If your weight is dropping faster than expected (more than 1 kg/week on a moderate deficit), consider eating slightly more — an overly aggressive deficit increases the risk of muscle loss, fatigue, and hormonal disruption. Add 100–200 kcal to your target and monitor for 2 weeks.",
+    "If your weight is not moving despite tracking consistently (less than 0.1 kg change over 3 weeks), consider: checking your logging accuracy (use a food scale rather than estimating portions), reducing your calorie target by 100–200 kcal, or increasing daily movement (steps, walking). A TDEE calculator is an estimate — your personal maintenance may be lower than predicted.",
+    "Adjusting your target in Fitzenia: your calorie target is driven by your goal and Fitzenia's adaptive TDEE, which learns your real maintenance from your logged intake and weight over time. To change it, go to My Page → Edit Goal to update your goal direction, target weight, or pace (this recomputes the target), and My Page → Edit Macros to change how the calories split across protein, carbs, and fat. There isn't a separate 'manual override' field — the target follows your goal and your tracked data.",
+    "Calorie cycling (or zigzag dieting) involves alternating between higher-calorie days (e.g., training days) and lower-calorie days (e.g., rest days) while hitting the same weekly total. Some people find this easier to adhere to. Fitzenia does not currently have an automatic calorie cycling feature, but you can manually adjust your daily target for each day.",
+    "Refeed days are planned higher-calorie days (at or slightly above maintenance) inserted into a calorie deficit period. They can temporarily restore leptin levels, improve gym performance, and provide a psychological break from dieting. A refeed is typically 1–2 days per week during an extended cut.",
+    "Diet breaks are extended periods (1–2 weeks) at maintenance calories within a longer fat loss phase. Research suggests diet breaks can help preserve metabolic rate during prolonged deficits. After a diet break, most people resume their cut with renewed adherence and better energy levels.",
+    "If you are extremely hungry all the time on your current calorie target, it may be too aggressive. Sustainable fat loss should involve some hunger, but not constant distress. Prioritize protein (it's the most satiating macro), increase dietary fiber (slows digestion), drink more water, and consider reducing the deficit by 100–200 kcal."
+  ]
+}

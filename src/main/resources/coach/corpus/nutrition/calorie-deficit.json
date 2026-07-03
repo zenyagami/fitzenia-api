@@ -1,0 +1,17 @@
+{
+  "id": "nutrition/calorie-deficit",
+  "title": "How a calorie deficit works for fat loss",
+  "section": "nutrition",
+  "locale": "en",
+  "source_uri": "coach/corpus/nutrition/calorie-deficit.json",
+  "chunks": [
+    "Fat loss happens when you eat fewer calories than you burn over time — a calorie deficit. This is the single non-negotiable mechanism behind every diet that works. Fitzenia sets your deficit by subtracting from your estimated maintenance calories (TDEE) based on your goal and timeline.",
+    "A moderate deficit of about 300–500 kcal/day produces roughly 0.3–0.5 kg of fat loss per week for most people. This pace is sustainable, protects muscle, and keeps hunger and energy manageable. A useful guideline is to lose about 0.5–1% of your body weight per week.",
+    "Larger deficits (500–750 kcal/day or more) lose weight faster but raise the risk of muscle loss, low energy, intense hunger, and poor training performance. Aggressive cuts are best reserved for shorter periods and for people carrying higher body fat. Leaner individuals should cut more slowly.",
+    "Protein and resistance training are what tell your body to hold onto muscle while you lose fat. In a deficit without enough protein or training stimulus, a meaningful share of the weight you lose can be muscle. Keep protein around 2.0–2.4 g/kg and keep lifting.",
+    "Weight loss is not linear. Water retention from stress, sleep, sodium, hormones, and training can mask fat loss for days or weeks. Judge progress by the trend over 2–3 weeks using weekly averages, not by daily scale readings.",
+    "As you lose weight, your maintenance calories drop because a smaller body burns fewer calories. This is normal, not 'metabolic damage.' Fitzenia recalculates your target as your weight changes; if loss stalls for 2–3 weeks despite accurate tracking, a small further adjustment of 100–200 kcal is usually enough.",
+    "Adherence beats perfection. The best deficit is the largest one you can stick to without bingeing, obsessing, or burning out. If a diet feels miserable, ease the deficit — slower consistent loss outperforms fast loss you cannot maintain.",
+    "Extreme restriction, very-low-calorie targets, or rapid weight loss can be harmful and are not appropriate goals here. If your weight is in a healthy range and you want to restrict aggressively, or if eating feels out of control, please talk to your doctor or a registered dietitian."
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "id": "nutrition/carbohydrates",
+  "title": "Carbohydrates: how much, what kind, and when",
+  "section": "nutrition",
+  "locale": "en",
+  "source_uri": "coach/corpus/nutrition/carbohydrates.json",
+  "chunks": [
+    "Carbohydrates are your main fuel for training and brain function. After protein and a fat floor are set, carbs typically make up the largest share of remaining calories — often 3–5 g/kg of body weight per day for active people, and more for endurance athletes. There is no strict 'required' carb intake, but eating enough supports better workouts and recovery.",
+    "Complex carbohydrates — oats, rice, potatoes, quinoa, whole grains, beans, and fruit — digest more slowly, come packaged with fiber and micronutrients, and keep you fuller. Build most of your carbs from these. Simple or refined carbs (sweets, white bread, sugary drinks) are not forbidden but offer little fiber and satiety per calorie.",
+    "Carbs are stored as glycogen in your muscles and liver. Full glycogen stores let you train harder and can make muscles look fuller. When you cut carbs sharply, you also lose water (about 3 g of water per gram of glycogen), which shows up as a quick drop on the scale that is not fat loss.",
+    "Low-carb and keto diets can work for fat loss, but only because they often reduce total calories and appetite — not because of carbs themselves. For most people who train hard, a moderate-to-higher carb intake supports better performance than very low carb.",
+    "Carb timing is a minor optimization, not a make-or-break. Having some carbs in the meals around your workout can help training quality and recovery, but total daily carbs matter far more than precise timing. Eat carbs at the times that help you train well and feel good.",
+    "Fiber is a type of carbohydrate your body cannot fully digest, and it is one of the most underrated parts of a diet. Aim for roughly 14 g of fiber per 1,000 kcal, or about 25–38 g per day, from vegetables, fruit, legumes, and whole grains.",
+    "If you feel flat, weak, or moody on a very low-carb intake, that is a sign to add carbs back rather than cut further. Energy and training performance are signals worth listening to, especially during a deficit."
+  ]
+}

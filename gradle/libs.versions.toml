@@ -1,5 +1,5 @@
 [versions]
-kotlin = "2.1.10"
+kotlin = "2.3.10"
 ktor = "3.2.3"
 logback = "1.5.13"
 google-cloud-secretmanager = "2.54.0"
@@ -9,6 +9,7 @@ kotlin-datetime = "0.6.1"
 google-api-client = "2.7.0"
 jackson = "2.18.2"
 dotenv-kotlin = "6.4.1"
+koog = "1.0.0"
 
 [libraries]
 ktor-server-auth = { module = "io.ktor:ktor-server-auth", version.ref = "ktor" }
@@ -18,6 +19,7 @@ ktor-server-content-negotiation = { module = "io.ktor:ktor-server-content-negoti
 ktor-serialization-kotlinx-json = { module = "io.ktor:ktor-serialization-kotlinx-json", version.ref = "ktor" }
 ktor-server-status-pages = { module = "io.ktor:ktor-server-status-pages", version.ref = "ktor" }
 ktor-server-rate-limit = { module = "io.ktor:ktor-server-rate-limit", version.ref = "ktor" }
+ktor-server-cors = { module = "io.ktor:ktor-server-cors", version.ref = "ktor" }
 google-cloud-secretmanager = { module = "com.google.cloud:google-cloud-secretmanager", version.ref = "google-cloud-secretmanager" }
 google-api-client = { module = "com.google.api-client:google-api-client", version.ref = "google-api-client" }
 kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinx-serialization" }
@@ -26,6 +28,8 @@ kotlinx-coroutines-guava = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-
 kotlinx-datetime = { module = "org.jetbrains.kotlinx:kotlinx-datetime", version.ref = "kotlin-datetime" }
 jackson-module-kotlin = { module = "com.fasterxml.jackson.module:jackson-module-kotlin", version.ref = "jackson" }
 dotenv-kotlin = { module = "io.github.cdimascio:dotenv-kotlin", version.ref = "dotenv-kotlin" }
+koog-agents = { module = "ai.koog:koog-agents", version.ref = "koog" }
+koog-google = { module = "ai.koog:prompt-executor-google-client", version = "1.0.0-beta" }
 ktor-server-netty = { module = "io.ktor:ktor-server-netty", version.ref = "ktor" }
 logback-classic = { module = "ch.qos.logback:logback-classic", version.ref = "logback" }
 ktor-server-test-host = { module = "io.ktor:ktor-server-test-host", version.ref = "ktor" }

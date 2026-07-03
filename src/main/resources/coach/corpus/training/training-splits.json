@@ -1,0 +1,16 @@
+{
+  "id": "training/training-splits",
+  "title": "Choosing a training split: full body, upper/lower, push-pull-legs",
+  "section": "training",
+  "locale": "en",
+  "source_uri": "coach/corpus/training/training-splits.json",
+  "chunks": [
+    "A training split is how you divide your muscles across the week. There is no single best split — the best one is the one that fits your schedule, lets you train each muscle about twice a week, and that you can stick to consistently. Frequency and total volume matter more than the specific split.",
+    "Full-body training works each major muscle group every session and suits people training 2–3 days a week. It delivers high frequency per muscle and is very time-efficient, though sessions can feel long if you include many exercises.",
+    "An upper/lower split alternates upper-body and lower-body days, fitting well into 4 days a week. It lets you train each muscle twice weekly with enough volume per session and is a reliable default for intermediates.",
+    "Push/pull/legs (PPL) groups pushing muscles (chest, shoulders, triceps), pulling muscles (back, biceps), and legs. Run over 6 days it trains each muscle twice a week with high volume; run over 3 days it trains each once. PPL suits people who enjoy higher gym frequency.",
+    "A 'bro split' trains one muscle group per day (chest day, back day, etc.) with only once-weekly frequency per muscle. It can build muscle but is generally less efficient than training each muscle about twice a week, so it is not the best starting choice for most people.",
+    "Match the split to your real availability. If you can reliably train 3 days, a full-body or upper/lower/full setup beats an ambitious 6-day plan you will miss. Consistency over months is what builds muscle, not the theoretical perfection of the program.",
+    "Whatever the split, aim to hit each muscle group roughly twice per week, keep weekly sets per muscle in a productive range, and apply progressive overload. The split is just the container; what fills it — volume, intensity, and progression — drives results."
+  ]
+}

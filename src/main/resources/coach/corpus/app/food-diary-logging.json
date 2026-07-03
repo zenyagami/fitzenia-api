@@ -1,0 +1,19 @@
+{
+  "id": "app/food-diary-logging",
+  "title": "Food diary and meal logging in Fitzenia",
+  "section": "app",
+  "locale": "en",
+  "source_uri": "coach/corpus/app/food-diary-logging.json",
+  "chunks": [
+    "Your Fitzenia food diary lives on the Dashboard tab — it's your daily home for logging everything you eat and drink. Entries are organized into six meals: Breakfast, Morning Snack, Lunch, Afternoon Snack, Dinner, and Evening Snack. Each meal shows its subtotal calories and macros, and the summary at the top of the Dashboard shows your total intake versus your daily targets.",
+    "To add a food, tap the add button on the meal you want (Breakfast, a snack, Lunch, or Dinner), then choose a logging method: text search, barcode scan, AI photo scan, recent foods, favorites, your My Meals templates, or a custom food. After selecting a food, set the portion size and add it.",
+    "You can log the same food multiple times in a day (for example, two servings at different times). Recently logged foods and your saved favorites and My Meals make re-logging fast — pick the item, confirm the portion, and add.",
+    "Serving sizes come from the food's database entry. Common options include grams, milliliters, pieces, cups, tablespoons, and product-specific portions like '1 slice', '1 container', or '100 g'. You can always override with a custom gram weight (or a number of servings) for more precision.",
+    "Recent Foods shows the foods you've logged most recently, so re-logging staples is quick. My Meals saves a group of foods as a single named template (for example 'My Morning Oats') that you log all at once. Both are reached from the add button on a meal.",
+    "You can edit or delete a diary entry after logging it. Tap an entry to open its detail view and adjust the portion size or serving unit, then save. To remove an entry, use the delete/remove option on it. Composite entries (a saved meal or an AI-scanned plate) keep their ingredients so you can edit the parts.",
+    "Fitzenia supports logging for past and future dates. Use the calendar strip at the top of the Dashboard to switch days. Logging ahead (for example planning tomorrow's meals) is a useful way to stay on target — you can adjust the planned entries later as your day changes.",
+    "Fitzenia shows a calorie and macro ring on the Dashboard that updates in real time as you log. It shows how much of each macro you've consumed versus your daily target and how many calories remain for the day. Tap it for the full breakdown, including fiber, sugar, sodium, and saturated fat where the food data provides them.",
+    "When you go over your calorie target, the 'remaining' value goes negative (for example '-150 kcal'). Fitzenia doesn't penalize occasional overages — consistency over weeks matters far more than any single day. Review the Progress tab for the trend that actually predicts results.",
+    "Meal reminders can nudge you to log a specific meal at a chosen time, and from the reminder notification you can quick-add a suggested food or saved meal directly into that meal. Set these up under My Page → Settings → Notifications."
+  ]
+}
