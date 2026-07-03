@@ -1,0 +1,16 @@
+{
+  "id": "nutrition/calorie-surplus",
+  "title": "Lean bulking: building muscle in a calorie surplus",
+  "section": "nutrition",
+  "locale": "en",
+  "source_uri": "coach/corpus/nutrition/calorie-surplus.json",
+  "chunks": [
+    "Building muscle is best supported by a slight calorie surplus — eating a bit more than you burn so your body has the energy and raw materials to add tissue. A 'lean bulk' aims to maximize muscle gain while keeping fat gain controlled.",
+    "A surplus of about 150–300 kcal/day above maintenance is enough for most people. This targets roughly 0.2–0.3 kg/week of weight gain, or about 0.25–0.5% of body weight per week. Beginners and those returning from a break can gain a little faster; advanced lifters should stay at the lower end.",
+    "Bigger surpluses do not build muscle faster — muscle growth has a biological speed limit. Eating far above maintenance mostly adds fat, which then takes a cut to remove. Slow and steady keeps you leaner and means less time dieting later.",
+    "Muscle is built by the combination of progressive resistance training, adequate protein (around 1.6–2.0 g/kg), and a modest surplus. Without a training stimulus, extra calories simply become fat. The surplus supports the work you do in the gym; it does not replace it.",
+    "Expect some fat gain on any bulk — that is normal and partly unavoidable. A reasonable target is to gain mostly lean mass with only a small amount of fat. If your waist is climbing fast or you are gaining well above 0.3–0.5 kg/week, trim the surplus.",
+    "Newer lifters can sometimes build muscle and lose fat at the same time ('body recomposition'), especially at higher body fat or when returning to training. This works best at or near maintenance calories with high protein and consistent training, and it slows as you gain experience.",
+    "Track your weight trend weekly and adjust. If the scale is not moving up over 2–3 weeks, add about 100–150 kcal. If it is climbing too fast, subtract a similar amount. Let the trend, not a single weigh-in, guide the change."
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "id": "training/training-volume",
+  "title": "Training volume: how many sets per muscle per week",
+  "section": "training",
+  "locale": "en",
+  "source_uri": "coach/corpus/training/training-volume.json",
+  "chunks": [
+    "Training volume — usually counted as the number of hard working sets per muscle group per week — is one of the biggest levers for muscle growth. Within reason, more quality volume produces more growth, up to the point where recovery can no longer keep up.",
+    "A productive starting range for most muscle groups is about 10–20 hard sets per week. Beginners grow well on the lower end (around 10 sets), while more advanced lifters often need toward the higher end to keep progressing. Start lower and add volume as needed rather than maxing out immediately.",
+    "Spread volume across two or more sessions per week per muscle. For example, 16 weekly sets for back is better done as 8 sets twice a week than 16 sets in one brutal session, because quality drops sharply as fatigue accumulates within a workout.",
+    "More volume is not always better. Past your personal recovery limit, extra sets add fatigue without extra growth and can even set you back. Signs you have overshot include persistent soreness, declining performance, poor sleep, and dread before workouts.",
+    "Count hard sets taken close to failure (about 1–3 reps in reserve). Easy warmup sets and sets left far from failure do not count toward your growth-driving volume. Junk volume — lots of half-hearted sets — inflates the number without the benefit.",
+    "Smaller muscles like biceps and triceps also get indirect work from compound lifts (rows, pulldowns, presses). Factor that in so you do not massively overshoot on isolation work for muscles already trained by your big movements.",
+    "Adjust volume based on results and recovery, not a fixed formula. If you are progressing and recovering well, hold or slightly increase. If progress stalls and fatigue is high, reduce volume or deload before adding more."
+  ]
+}

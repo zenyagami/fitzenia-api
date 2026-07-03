@@ -105,6 +105,19 @@ spec:
             secretKeyRef:
               name: SUPABASE_SERVICE_ROLE_KEY
               key: latest
+        # ---------- RevenueCat entitlement sync ----------
+        # Drives POST /webhooks/revenuecat. The route returns 503 when these
+        # secrets are absent; keep values server-only.
+        - name: REVENUECAT_WEBHOOK_AUTH
+          valueFrom:
+            secretKeyRef:
+              name: REVENUECAT_WEBHOOK_AUTH
+              key: latest
+        - name: REVENUECAT_REST_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: REVENUECAT_REST_API_KEY
+              key: latest
         resources:
           limits:
             cpu: "1"

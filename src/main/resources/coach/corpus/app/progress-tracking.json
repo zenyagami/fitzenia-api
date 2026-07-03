@@ -1,0 +1,19 @@
+{
+  "id": "app/progress-tracking",
+  "title": "Progress tracking: weight, photos, and body composition in Fitzenia",
+  "section": "app",
+  "locale": "en",
+  "source_uri": "coach/corpus/app/progress-tracking.json",
+  "chunks": [
+    "Fitzenia tracks your body weight over time in the Progress tab. Log your weight by tapping '+' in the Weight section, entering your current weight (in kg or lbs, depending on your unit setting), and saving. Fitzenia plots your weight history on a chart and shows your trend line.",
+    "Weigh yourself under consistent conditions for the most meaningful data: first thing in the morning, after using the bathroom, before eating or drinking. Weigh yourself at the same time each day, and use the same scale. Daily weight can fluctuate by 1–3 kg due to water retention, food volume, and hormonal changes — trend data is more informative than any single weigh-in.",
+    "The weight trend line in Fitzenia smooths out daily fluctuations using a moving average, making it easier to see whether you are trending up, down, or flat. If your trend is moving in the wrong direction after 2+ weeks of consistent logging, it's time to adjust your calorie intake.",
+    "Progress photos help you track body composition changes that the scale doesn't show. You might maintain the same weight but look noticeably different as body fat decreases and muscle increases (recomposition). Fitzenia lets you take and store progress photos within the app, visible only to you.",
+    "To take a progress photo, go to Progress → Photos → '+'. The app guides you to take front, side, and back photos in a consistent lighting setup. You can compare any two photos side by side using the comparison view, making it easy to see changes over weeks or months.",
+    "AI Progress Projection (premium feature): Fitzenia can show you a visual estimate of what your body might look like at different stages of your fitness goal. Upload a current photo, enter your current and target body composition, and the AI generates projected images at intermediate checkpoints. These projections are motivational tools, not medical predictions.",
+    "Body fat percentage is an optional metric in Fitzenia. You can enter your estimated body fat percentage manually, or Fitzenia can estimate it from a progress photo using AI. Body fat data is used to calculate your lean mass, which helps set more precise macro targets (especially protein) based on muscle tissue rather than total weight.",
+    "The Progress tab opens into detail screens for each metric: a weight detail with your full history and smoothed trend, a calories/adaptive-TDEE detail that shows how Fitzenia's estimate of your maintenance has moved (with its confidence level), and a BMI detail. Reviewing these trends over weeks is far more informative than any single day and helps you spot patterns in your habits.",
+    "Fitzenia can show projected progress based on your current calorie deficit or surplus and rate of weight change. If you are losing 0.4 kg/week at your current intake, the app estimates when you will reach your goal weight. These projections update automatically as your actual weight data comes in.",
+    "If your weight has plateaued (no movement for 3+ weeks) despite consistent calorie tracking, consider: increasing NEAT (non-exercise activity — walking, standing, fidgeting), adding or increasing cardio, reducing calories by another 100–200 kcal, or taking a 1–2 week diet break at maintenance before resuming the cut."
+  ]
+}

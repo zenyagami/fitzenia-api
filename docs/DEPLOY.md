@@ -170,7 +170,21 @@ ENV_FILE=..env.prod ./sync-secrets.sh prod
 
 # 5. Deploy
 ./deploy.sh
+
+# 6. Grant public access at the Cloud Run layer (ONE-TIME, per public service).
+#    `gcloud run services replace` (used by the deploy scripts) does NOT set IAM, so a
+#    brand-new service defaults to authenticated-only and returns a front-end 403
+#    ("your client does not have permission to get URL /health"). The app still enforces
+#    the Supabase JWT itself — this only opens the outer Cloud Run layer.
+gcloud run services add-iam-policy-binding fitzenia-api-prod \
+  --region=europe-north1 --project=fitzenio \
+  --member=allUsers --role=roles/run.invoker
 ```
+
+> **Coach service:** `deploy-coach.sh` now applies this `allUsers → run.invoker` binding itself
+> (idempotent), so a fresh `fitzenia-coach-prod` is reachable without a manual step. `deploy.sh`
+> (the food API) does **not** — grant it once as in step 6 above. The binding persists across
+> redeploys (`services replace` doesn't touch IAM), so it's a one-time action per service.
 
 ---
 
@@ -383,6 +397,125 @@ gcloud scheduler jobs create http usda-mirror-monthly \
 **Soft-delete pass deletes too much / too little**
 - Correctness depends on `upsert_usda_foods` always refreshing `synced_at = now()` on conflict. If you ever modify the RPC, re-test that branch.
 - The soft-delete cutoff is captured 60 s before the first upsert (clock-drift cushion). Don't tighten that cushion.
+
+---
+
+## Coach KB Ingest Job (RAG corpus)
+
+The AI Coach's knowledge base (RAG corpus) is authored as plain JSON files in the repo and pushed into Supabase by the `coach-ingest` Cloud Run Job. **The corpus only exists in Supabase after ingestion — editing the JSON does nothing live until you re-run the ingest.**
+
+| Setting | Value |
+|---|---|
+| Build target | `-PtargetService=coach-ingest` → `com.zenthek.coach.ingest.CoachIngestMain` |
+| Image | `gcr.io/fitzenio/fitzenia-coach-ingest` (prod) / `…-dev` |
+| Migration | `db/migrations/006_coach_kb.sql` |
+| Tables | `public.coach_kb_doc`, `public.coach_kb_chunk` |
+| Corpus location | `src/main/resources/coach/corpus/<section>/*.json` |
+| Sections | `app`, `nutrition`, `training`, `general`, `recipes` |
+| Embeddings | `gemini-embedding-2`, 768-dim (costs Gemini API calls per chunk) |
+
+### How the corpus is organized
+
+One JSON file per doc, auto-discovered — **there is no manifest, index, or registration list.** `loadCorpus()` scans the section folder and decodes every `.json` in it, so adding a doc = dropping a new file in the right `coach/corpus/<section>/` folder. Each file:
+
+```json
+{
+  "id": "<section>/<kebab-name>",   // primary key in coach_kb_doc; must be unique
+  "title": "Human-readable title",
+  "section": "<section>",            // must match the folder name
+  "locale": "en",                    // optional, defaults to "en"
+  "source_uri": "coach/corpus/...",  // optional
+  "chunks": ["one idea per chunk", "..."]  // non-empty list of non-empty strings
+}
+```
+
+Conventions: `id` is `<section>/<kebab-name>`, the `section` field must equal the folder, and **recipes are one chunk per recipe** (preserves per-recipe macro tagging). `app`/`nutrition` section names are load-bearing because the retriever special-cases them, so don't rename sections casually.
+
+### Adding or editing a doc — the workflow
+
+1. **Add or edit** the `.json` under `src/main/resources/coach/corpus/<section>/`. No wiring needed.
+2. **Validate it** (the build does NOT check JSON resources — a malformed file or a missing required field crashes the whole section's ingest):
+   ```bash
+   jq empty src/main/resources/coach/corpus/<section>/<file>.json   # well-formed?
+   ```
+3. **Re-run the ingest for that section** (local; uses your `.env` for `SUPABASE_*` + `GEMINI_API_KEY`):
+   ```bash
+   ./gradlew run -PtargetService=coach-ingest --args="--section=<section>"
+   ```
+4. **Sanity check** the rows landed:
+   ```sql
+   SELECT section, count(*) FROM public.coach_kb_chunk GROUP BY section;
+   ```
+
+### Change detection — the content-hash gotcha
+
+The "did this doc change?" check (`isDocChanged`) compares a **SHA-256 of the `chunks` only** (`chunks.joinToString("\n\n")`) — **not** `title`, `id`, or `source_uri`.
+
+| What you changed | Result on next ingest |
+|---|---|
+| Added a new file (new `id`) | Embedded + inserted automatically ✓ |
+| Edited the **chunk text** | Hash differs → re-embedded, old chunks replaced ✓ |
+| Edited **only the title** (chunks untouched) | Hash unchanged → **skipped** ⚠️ |
+
+To force a full re-embed of a section regardless of hashes (use this if an edit was title-only, or when in doubt — it just costs a few extra Gemini calls):
+
+```bash
+./gradlew run -PtargetService=coach-ingest --args="--section=<section> --rebuild"
+```
+
+> **Dev vs prod.** Ingest writes to whichever Supabase your env points at. Use dev (`tpslgveyjldykkkhnifs`) for local validation, and point env at prod only when intentionally refreshing the production corpus.
+
+---
+
+## Coach Jobs — retention + RevenueCat sweepers (prod only)
+
+Two scheduled Cloud Run **Jobs** back the AI Coach (both `project=fitzenio`, `region=europe-north1`):
+
+| Job | Purpose | Build target | Config |
+|---|---|---|---|
+| `coach-retention-sweeper` | Hard-delete coach chats archived > 12 months (messages/summaries/traces cascade). | `coach-retention` | `cloud-run-job-coach-retention.yaml` |
+| `coach-rc-sweeper` | Replay stuck/failed RevenueCat webhook events (`coach_rc_claim_recoverable_events` → stored payload). | `coach-rc-sweeper` | `cloud-run-job-coach-rc-sweeper.yaml` |
+
+### Deploy
+
+```bash
+./deploy-coach-retention.sh      # builds -Pprod -PtargetService=coach-retention, deploys the Job
+./deploy-coach-rc-sweeper.sh     # builds -Pprod -PtargetService=coach-rc-sweeper, deploys the Job
+```
+
+### Secrets
+
+Both Jobs reuse secrets already in Secret Manager: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` (both Jobs) + `REVENUECAT_REST_API_KEY` (rc-sweeper only). No `REVENUECAT_WEBHOOK_AUTH` — the sweeper replays already-claimed rows, it doesn't receive webhooks. If a Job crashes on a missing secret, the SA lacks access → `./grant-secrets.sh prod`.
+
+### Manual smoke test
+
+```bash
+gcloud run jobs execute coach-retention-sweeper --region=europe-north1 --project=fitzenio --wait
+gcloud run jobs execute coach-rc-sweeper        --region=europe-north1 --project=fitzenio --wait
+```
+
+### Cloud Scheduler
+
+The deploy scripts print the intended cron but **do not create the triggers** — create them once. Easiest via the Console (**Cloud Run → the Job → Triggers → Add scheduler trigger**, which wires the service account + OIDC auth for you). CLI equivalent (needs an SA with `roles/run.invoker`; the default compute SA works —
+`gcloud projects describe fitzenio --format='value(projectNumber)'` for `<PROJECT_NUMBER>`):
+
+```bash
+# rc-sweeper — every minute
+gcloud scheduler jobs create http coach-rc-sweeper-trigger \
+  --project=fitzenio --location=europe-north1 --schedule="* * * * *" \
+  --uri="https://europe-north1-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/fitzenio/jobs/coach-rc-sweeper:run" \
+  --http-method=POST \
+  --oauth-service-account-email=<PROJECT_NUMBER>-compute@developer.gserviceaccount.com
+
+# retention — daily 04:23 UTC
+gcloud scheduler jobs create http coach-retention-trigger \
+  --project=fitzenio --location=europe-north1 --schedule="23 4 * * *" \
+  --uri="https://europe-north1-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/fitzenio/jobs/coach-retention-sweeper:run" \
+  --http-method=POST \
+  --oauth-service-account-email=<PROJECT_NUMBER>-compute@developer.gserviceaccount.com
+```
+
+The rc-sweeper's every-minute cadence is intentional (it's the fallback that recovers webhook events the live `POST /webhooks/revenuecat` on `fitzenia-api` failed to process; the Job exits fast when there's nothing to claim). See `docs/AI_COACH.md` for the coach architecture.
 
 ---
 

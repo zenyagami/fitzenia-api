@@ -1,0 +1,19 @@
+{
+  "id": "recipes/breakfasts",
+  "title": "High-protein breakfast recipes",
+  "section": "recipes",
+  "locale": "en",
+  "source_uri": "coach/corpus/recipes/breakfasts.json",
+  "chunks": [
+    "Protein Overnight Oats (vegetarian, meal-prep). Mix 50 g rolled oats, 1 scoop (30 g) whey or plant protein, 150 g non-fat Greek yogurt, 150 ml milk of choice, and 80 g berries in a jar; refrigerate overnight and eat cold. Serves 1. Per serving: ~420 kcal, 38 g protein, 52 g carbs, 7 g fat. Tags: vegetarian, high-protein, high-fiber, no-cook, meal-prep.",
+    "Savory Egg & Veggie Scramble (vegetarian, gluten-free). Sauté a handful of spinach, diced peppers, and tomatoes in 1 tsp olive oil, then add 2 whole eggs plus 3 egg whites and scramble; finish with 20 g feta. Serves 1. Per serving: ~320 kcal, 30 g protein, 8 g carbs, 18 g fat. Tags: vegetarian, gluten-free, low-carb, high-protein.",
+    "Greek Yogurt Protein Bowl (vegetarian, no-cook). Top 200 g non-fat Greek yogurt with 30 g granola, 1 tbsp honey, 100 g mixed berries, and 10 g chopped almonds. Serves 1. Per serving: ~390 kcal, 28 g protein, 50 g carbs, 9 g fat. Tags: vegetarian, no-cook, high-protein, quick.",
+    "Banana Protein Pancakes (vegetarian). Blend 1 ripe banana, 2 eggs, 1 scoop (30 g) whey, and 30 g oats into a batter; cook small pancakes in a non-stick pan; top with a little sugar-free syrup. Serves 1. Per serving: ~430 kcal, 39 g protein, 48 g carbs, 11 g fat. Tags: vegetarian, high-protein, gluten-free-option.",
+    "Cottage Cheese Toast (vegetarian, quick). Spread 150 g cottage cheese on 2 slices wholegrain toast; top with sliced tomato, cracked pepper, and a drizzle of olive oil. Serves 1. Per serving: ~340 kcal, 27 g protein, 36 g carbs, 9 g fat. Tags: vegetarian, quick, high-protein, high-fiber.",
+    "Tofu Scramble (vegan, gluten-free). Crumble 200 g firm tofu and cook with 1 tsp olive oil, 1/2 tsp turmeric, garlic, and spinach until golden; season with salt and nutritional yeast. Serves 1. Per serving: ~290 kcal, 24 g protein, 9 g carbs, 18 g fat. Tags: vegan, gluten-free, dairy-free, low-carb, high-protein.",
+    "Smoked Salmon & Egg Plate (gluten-free, low-carb). Serve 80 g smoked salmon with 2 boiled eggs, sliced cucumber, and half an avocado; season with lemon and pepper. Serves 1. Per serving: ~400 kcal, 30 g protein, 6 g carbs, 28 g fat. Tags: gluten-free, low-carb, high-protein, omega-3.",
+    "Berry Protein Smoothie (vegetarian, no-cook). Blend 1 scoop (30 g) whey, 150 g frozen berries, 1 banana, 200 ml milk, and a handful of spinach with ice. Serves 1. Per serving: ~360 kcal, 33 g protein, 48 g carbs, 5 g fat. Tags: vegetarian, no-cook, high-protein, quick, on-the-go.",
+    "Breakfast Burrito Wrap (high-protein, meal-prep). Fill a wholegrain tortilla with 2 scrambled eggs, 60 g black beans, 30 g reduced-fat cheese, and salsa; roll and toast. Serves 1. Per serving: ~450 kcal, 30 g protein, 44 g carbs, 17 g fat. Tags: high-protein, high-fiber, vegetarian, meal-prep.",
+    "Apple-Cinnamon Protein Porridge (vegetarian). Cook 50 g oats with 200 ml milk, stir in 1 scoop (30 g) whey off the heat, and top with diced apple and cinnamon. Serves 1. Per serving: ~410 kcal, 35 g protein, 54 g carbs, 7 g fat. Tags: vegetarian, high-protein, high-fiber, warming."
+  ]
+}

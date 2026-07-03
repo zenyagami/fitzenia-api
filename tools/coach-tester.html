@@ -1,0 +1,533 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>AI Coach Tester</title>
+  <style>
+    body { font-family: monospace; max-width: 1100px; margin: 20px auto; padding: 0 16px; }
+    fieldset { margin-bottom: 16px; border: 1px solid #ccc; padding: 12px; }
+    legend { font-weight: bold; }
+    label { display: block; margin: 6px 0 2px; }
+    input, textarea { width: 100%; box-sizing: border-box; padding: 4px; font-family: monospace; }
+    input[type=password] { width: 100%; }
+    button { margin-top: 8px; padding: 6px 16px; cursor: pointer; }
+    #authStatus { margin-top: 6px; color: #555; font-size: 0.9em; }
+    .input-row { display: flex; gap: 8px; align-items: stretch; }
+    .input-row input { flex: 1; }
+    .input-row button { margin-top: 0; flex-shrink: 0; }
+    #events { background: #f5f5f5; border: 1px solid #ddd; padding: 12px; min-height: 100px; margin-top: 8px; }
+    .event { margin-bottom: 8px; }
+    .event strong { color: #333; }
+    .event pre { margin: 2px 0 0 16px; white-space: pre-wrap; word-break: break-all; }
+    .event.error strong { color: #c00; }
+    .event.token-stream { border-left: 3px solid #0a0; padding-left: 8px; }
+    .event.safety-hard-block { border-left: 3px solid #e07000; background: #fff8f0; padding: 8px; border-radius: 4px; }
+    .event.safety-hard-block strong { color: #a04000; }
+    .event.safety-soft-redirect { border-left: 3px solid #cc0; background: #fffff0; padding: 8px; border-radius: 4px; }
+    .event.safety-soft-redirect strong { color: #885500; }
+    #tokenText { color: #060; }
+    #clearBtn { background: #eee; }
+    /* Chat sidebar */
+    #chatList { margin-top: 8px; max-height: 260px; overflow-y: auto; border: 1px solid #ddd; background: #fafafa; }
+    .chat-item { display: flex; align-items: center; padding: 6px 8px; border-bottom: 1px solid #eee; gap: 8px; cursor: pointer; }
+    .chat-item:hover { background: #f0f0f0; }
+    .chat-item.active { background: #e8f0fe; border-left: 3px solid #1a73e8; }
+    .chat-item .chat-title { flex: 1; font-weight: bold; font-size: 0.95em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .chat-item .chat-meta { color: #888; font-size: 0.8em; white-space: nowrap; }
+    .chat-item .delete-chat { background: none; border: 1px solid #ccc; color: #c00; padding: 2px 6px; cursor: pointer; margin-top: 0; font-size: 0.85em; flex-shrink: 0; }
+    .chat-item .delete-chat:hover { background: #fee; }
+    #chatListStatus { color: #888; font-size: 0.85em; margin-top: 4px; }
+    .event.citation { border-left: 3px solid #1a73e8; background: #f0f6ff; padding: 6px 8px; border-radius: 4px; }
+    .event.citation strong { color: #1a5bb8; }
+    .citation-source { font-family: monospace; color: #1a5bb8; }
+    .citation-score { color: #888; font-size: 0.85em; margin-left: 6px; }
+    .event.tool-event { border-left: 3px solid #e8a001; background: #fffbf0; padding: 6px 8px; border-radius: 4px; }
+    .event.tool-event strong { color: #9a6700; }
+    .tool-ms { color: #888; font-size: 0.85em; margin-left: 6px; }
+    .tool-spinner { color: #e8a001; }
+    /* Notes panel */
+    #notesList { margin-top: 8px; max-height: 220px; overflow-y: auto; border: 1px solid #ddd; background: #fafafa; }
+    .note-item { display: flex; align-items: flex-start; padding: 6px 8px; border-bottom: 1px solid #eee; gap: 8px; }
+    .note-item .note-category { font-size: 0.8em; background: #e8f0fe; color: #1a5bb8; border-radius: 3px; padding: 1px 5px; white-space: nowrap; flex-shrink: 0; }
+    .note-item .note-text { flex: 1; font-size: 0.9em; word-break: break-word; }
+    .note-item .note-date { color: #aaa; font-size: 0.75em; white-space: nowrap; flex-shrink: 0; }
+    .note-item .delete-note { background: none; border: 1px solid #ccc; color: #c00; padding: 2px 6px; cursor: pointer; margin-top: 0; font-size: 0.8em; flex-shrink: 0; }
+    .note-item .delete-note:hover { background: #fee; }
+    #notesStatus { color: #888; font-size: 0.85em; margin-top: 4px; }
+  </style>
+</head>
+<body>
+  <h2>AI Coach Tester <small style="color:#888">(dev tool — not for production)</small></h2>
+
+  <fieldset>
+    <legend>1. Authentication</legend>
+    <label>Supabase URL
+      <input id="sbUrl" placeholder="https://xxxx.supabase.co">
+    </label>
+    <label>Anon Key (for login)
+      <input id="sbAnonKey" type="password" placeholder="eyJ...">
+    </label>
+    <label>Email
+      <input id="email" type="email" placeholder="user@example.com">
+    </label>
+    <label>Password
+      <input id="password" type="password">
+    </label>
+    <button onclick="login()">Login &rarr; get JWT</button>
+    <hr style="margin:10px 0">
+    <label>Or paste JWT directly
+      <span class="input-row">
+        <input id="jwt" type="password" placeholder="eyJ..." oninput="jwt=this.value.trim()">
+        <button type="button" onclick="copyJwt()">Copy JWT</button>
+      </span>
+    </label>
+    <div id="authStatus"></div>
+  </fieldset>
+
+  <fieldset>
+    <legend>2. Chat Sidebar</legend>
+    <label>Coach Server URL
+      <input id="coachUrl" value="http://localhost:8080" oninput="syncCoachUrl()">
+    </label>
+    <button onclick="loadChats()">↻ Refresh Chats</button>
+    <button onclick="newChat()" style="margin-left:8px; background:#eee">+ New Chat</button>
+    <div id="chatList"><em style="color:#aaa; padding:8px; display:block">Click Refresh to load chats…</em></div>
+    <div id="chatListStatus"></div>
+  </fieldset>
+
+  <fieldset>
+    <legend>3. Notes</legend>
+    <button onclick="loadNotes()">↻ Refresh Notes</button>
+    <div id="notesList"><em style="color:#aaa; padding:8px; display:block">Click Refresh to load notes…</em></div>
+    <div id="notesStatus"></div>
+  </fieldset>
+
+  <fieldset>
+    <legend>4. Send Message</legend>
+    <label>Chat ID <small style="color:#888">(leave blank to create a new chat)</small>
+      <input id="chatId" placeholder="auto-filled after first message or click a chat above">
+    </label>
+    <label>Message
+      <textarea id="message" rows="3" placeholder="hello"></textarea>
+    </label>
+    <label>Locale
+      <input id="locale" value="en" style="width:80px">
+    </label>
+    <button onclick="sendMessage()">Send &#x2192; SSE</button>
+    <button id="clearBtn" onclick="clearEvents()" style="margin-left:8px">Clear events</button>
+  </fieldset>
+
+  <fieldset>
+    <legend>5. SSE Events</legend>
+    <div id="events"><em style="color:#aaa">Events appear here…</em></div>
+  </fieldset>
+
+  <script>
+    let jwt = '';
+
+    function syncCoachUrl() {
+      // Keeps coach URL consistent between sidebar and send sections
+    }
+
+    function getCoachUrl() {
+      return document.getElementById('coachUrl').value.trim().replace(/\/$/, '');
+    }
+
+    async function login() {
+      const sbUrl = document.getElementById('sbUrl').value.trim().replace(/\/$/, '');
+      const anonKey = document.getElementById('sbAnonKey').value.trim();
+      const email = document.getElementById('email').value.trim();
+      const password = document.getElementById('password').value;
+      const statusEl = document.getElementById('authStatus');
+
+      statusEl.textContent = 'Logging in…';
+      try {
+        const resp = await fetch(`${sbUrl}/auth/v1/token?grant_type=password`, {
+          method: 'POST',
+          headers: { 'apikey': anonKey, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password }),
+        });
+        const data = await resp.json();
+        if (data.access_token) {
+          jwt = data.access_token;
+          document.getElementById('jwt').value = jwt;
+          statusEl.textContent = `✓ Logged in as ${data.user?.email} | id: ${data.user?.id} (expires in ${Math.floor(data.expires_in / 60)} min)`;
+          statusEl.style.color = '#060';
+        } else {
+          statusEl.textContent = `✗ ${JSON.stringify(data)}`;
+          statusEl.style.color = '#c00';
+        }
+      } catch (e) {
+        statusEl.textContent = `✗ Login failed: ${e.message}`;
+        statusEl.style.color = '#c00';
+      }
+    }
+
+    async function copyJwt() {
+      const token = document.getElementById('jwt').value.trim();
+      const statusEl = document.getElementById('authStatus');
+      if (!token) {
+        statusEl.textContent = 'No JWT to copy';
+        statusEl.style.color = '#c00';
+        return;
+      }
+
+      try {
+        if (navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(token);
+        } else {
+          fallbackCopyText(token);
+        }
+        statusEl.textContent = '✓ JWT copied to clipboard';
+        statusEl.style.color = '#060';
+      } catch (e) {
+        try {
+          fallbackCopyText(token);
+          statusEl.textContent = '✓ JWT copied to clipboard';
+          statusEl.style.color = '#060';
+        } catch (fallbackError) {
+          statusEl.textContent = `✗ Copy failed: ${fallbackError.message || e.message}`;
+          statusEl.style.color = '#c00';
+        }
+      }
+    }
+
+    function fallbackCopyText(text) {
+      const textarea = document.createElement('textarea');
+      textarea.value = text;
+      textarea.setAttribute('readonly', '');
+      textarea.style.position = 'fixed';
+      textarea.style.left = '-9999px';
+      document.body.appendChild(textarea);
+      textarea.select();
+      try {
+        if (!document.execCommand('copy')) {
+          throw new Error('Browser rejected copy command');
+        }
+      } finally {
+        document.body.removeChild(textarea);
+      }
+    }
+
+    async function loadNotes() {
+      if (!jwt) { alert('Login first or paste a JWT'); return; }
+      const statusEl = document.getElementById('notesStatus');
+      statusEl.textContent = 'Loading…';
+      try {
+        const resp = await fetch(`${getCoachUrl()}/api/coach/notes`, {
+          headers: { 'Authorization': `Bearer ${jwt}` },
+        });
+        if (!resp.ok) {
+          statusEl.textContent = `✗ HTTP ${resp.status}: ${await resp.text()}`;
+          return;
+        }
+        const notes = await resp.json();
+        renderNotesList(notes);
+        statusEl.textContent = `${notes.length} note(s)`;
+      } catch (e) {
+        statusEl.textContent = `✗ ${e.message}`;
+      }
+    }
+
+    function renderNotesList(notes) {
+      const listEl = document.getElementById('notesList');
+      if (notes.length === 0) {
+        listEl.innerHTML = '<em style="color:#aaa; padding:8px; display:block">No notes yet — chat with the coach to create some.</em>';
+        return;
+      }
+      listEl.innerHTML = '';
+      for (const note of notes) {
+        const div = document.createElement('div');
+        div.className = 'note-item';
+        const date = new Date(note.created_at).toLocaleString();
+        div.innerHTML = `
+          <span class="note-category">${escapeHtml(note.category)}</span>
+          <span class="note-text">${escapeHtml(note.note)}</span>
+          <span class="note-date">${escapeHtml(date)}</span>
+          <button class="delete-note" onclick="deleteNote('${escapeHtml(note.id)}')">✕</button>
+        `;
+        listEl.appendChild(div);
+      }
+    }
+
+    async function deleteNote(noteId) {
+      if (!jwt) { alert('Login first'); return; }
+      const statusEl = document.getElementById('notesStatus');
+      statusEl.textContent = 'Deleting…';
+      try {
+        const resp = await fetch(`${getCoachUrl()}/api/coach/notes/${encodeURIComponent(noteId)}`, {
+          method: 'DELETE',
+          headers: { 'Authorization': `Bearer ${jwt}` },
+        });
+        if (resp.status === 204) {
+          statusEl.textContent = '✓ Note deleted';
+          loadNotes();
+        } else {
+          statusEl.textContent = `✗ HTTP ${resp.status}: ${await resp.text()}`;
+        }
+      } catch (e) {
+        statusEl.textContent = `✗ ${e.message}`;
+      }
+    }
+
+    async function loadChats() {
+      if (!jwt) { alert('Login first or paste a JWT'); return; }
+      const statusEl = document.getElementById('chatListStatus');
+      statusEl.textContent = 'Loading…';
+      try {
+        const resp = await fetch(`${getCoachUrl()}/api/coach/chats`, {
+          headers: { 'Authorization': `Bearer ${jwt}` },
+        });
+        if (!resp.ok) {
+          const err = await resp.text();
+          statusEl.textContent = `✗ HTTP ${resp.status}: ${err}`;
+          return;
+        }
+        const chats = await resp.json();
+        renderChatList(chats);
+        statusEl.textContent = `${chats.length} chat(s)`;
+      } catch (e) {
+        statusEl.textContent = `✗ ${e.message}`;
+      }
+    }
+
+    function renderChatList(chats) {
+      const listEl = document.getElementById('chatList');
+      const activeChatId = document.getElementById('chatId').value.trim();
+      if (chats.length === 0) {
+        listEl.innerHTML = '<em style="color:#aaa; padding:8px; display:block">No chats yet — send a message to create one.</em>';
+        return;
+      }
+      listEl.innerHTML = '';
+      for (const chat of chats) {
+        const div = document.createElement('div');
+        div.className = `chat-item${chat.id === activeChatId ? ' active' : ''}`;
+        div.dataset.chatId = chat.id;
+
+        const lastTime = chat.last_message_at
+          ? new Date(chat.last_message_at).toLocaleString()
+          : new Date(chat.created_at).toLocaleString();
+
+        div.innerHTML = `
+          <span class="chat-title" title="${escapeHtml(chat.id)}">${escapeHtml(chat.title)}</span>
+          <span class="chat-meta">${chat.message_count} msg${chat.message_count !== 1 ? 's' : ''} &bull; ${escapeHtml(lastTime)}</span>
+          <button class="delete-chat" onclick="event.stopPropagation(); deleteChat('${escapeHtml(chat.id)}')">✕</button>
+        `;
+        div.addEventListener('click', () => switchToChat(chat.id));
+        listEl.appendChild(div);
+      }
+    }
+
+    function switchToChat(chatId) {
+      document.getElementById('chatId').value = chatId;
+      // Highlight selected in sidebar
+      document.querySelectorAll('.chat-item').forEach(el => {
+        el.classList.toggle('active', el.dataset.chatId === chatId);
+      });
+      // Load history into events panel
+      loadChatHistory(chatId);
+    }
+
+    async function loadChatHistory(chatId) {
+      if (!jwt) return;
+      try {
+        const resp = await fetch(`${getCoachUrl()}/api/coach/chats/${encodeURIComponent(chatId)}/messages`, {
+          headers: { 'Authorization': `Bearer ${jwt}` },
+        });
+        if (!resp.ok) return;
+        const messages = await resp.json();
+        const eventsDiv = document.getElementById('events');
+        eventsDiv.innerHTML = `<em style="color:#888">History for chat ${chatId} (${messages.length} messages):</em>`;
+        for (const msg of messages) {
+          const div = document.createElement('div');
+          div.className = 'event';
+          const time = new Date(msg.created_at).toLocaleTimeString();
+          div.innerHTML = `<strong>[${escapeHtml(msg.role)}] ${time}:</strong><pre>${escapeHtml(msg.content)}</pre>`;
+          eventsDiv.appendChild(div);
+        }
+      } catch (e) {
+        // silently ignore history load errors
+      }
+    }
+
+    async function deleteChat(chatId) {
+      if (!jwt) { alert('Login first'); return; }
+      if (!confirm(`Delete chat ${chatId}?\n\nThis archives the chat and removes all its messages.`)) return;
+      const statusEl = document.getElementById('chatListStatus');
+      try {
+        const resp = await fetch(`${getCoachUrl()}/api/coach/chats/${encodeURIComponent(chatId)}`, {
+          method: 'DELETE',
+          headers: { 'Authorization': `Bearer ${jwt}` },
+        });
+        if (resp.status === 204) {
+          // If we just deleted the active chat, clear the chatId field
+          if (document.getElementById('chatId').value.trim() === chatId) {
+            document.getElementById('chatId').value = '';
+          }
+          await loadChats();
+          statusEl.textContent = `✓ Deleted chat ${chatId}`;
+        } else {
+          const err = await resp.text();
+          statusEl.textContent = `✗ HTTP ${resp.status}: ${err}`;
+        }
+      } catch (e) {
+        statusEl.textContent = `✗ ${e.message}`;
+      }
+    }
+
+    function newChat() {
+      document.getElementById('chatId').value = '';
+      document.querySelectorAll('.chat-item').forEach(el => el.classList.remove('active'));
+      clearEvents();
+    }
+
+    async function sendMessage() {
+      if (!jwt) { alert('Login first or paste a JWT'); return; }
+
+      const chatIdInput = document.getElementById('chatId').value.trim();
+      const content = document.getElementById('message').value.trim();
+      const locale = document.getElementById('locale').value.trim() || 'en';
+
+      if (!content) { alert('Enter a message'); return; }
+
+      const url = chatIdInput
+        ? `${getCoachUrl()}/api/coach/chats/${encodeURIComponent(chatIdInput)}/messages`
+        : `${getCoachUrl()}/api/coach/messages`;
+
+      appendEvent('→ POST', url);
+
+      try {
+        const resp = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${jwt}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ content, locale }),
+        });
+
+        if (!resp.ok) {
+          const errText = await resp.text();
+          appendEvent(`HTTP ${resp.status}`, errText, 'error');
+          return;
+        }
+
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let tokenEl = null;
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+
+          // Split on blank lines (SSE event separator)
+          const parts = buffer.split('\n\n');
+          buffer = parts.pop() ?? ''; // keep the last incomplete chunk
+
+          for (const part of parts) {
+            if (!part.trim()) continue;
+            const lines = part.split('\n');
+            const eventType = (lines.find(l => l.startsWith('event:')) ?? '').slice(6).trim() || 'message';
+            const dataStr  = (lines.find(l => l.startsWith('data:'))  ?? '').slice(5).trim();
+
+            if (eventType === 'token') {
+              const payload = JSON.parse(dataStr);
+              if (!tokenEl) {
+                const div = document.createElement('div');
+                div.className = 'event token-stream';
+                div.innerHTML = '<strong>token stream:</strong> <span id="tokenText"></span>';
+                document.getElementById('events').appendChild(div);
+                tokenEl = document.getElementById('tokenText');
+              }
+              tokenEl.textContent = (tokenEl.textContent ?? '') + payload.delta;
+            } else if (eventType === 'chat_created') {
+              const payload = JSON.parse(dataStr);
+              document.getElementById('chatId').value = payload.chatId;
+              appendEvent('chat_created', JSON.stringify(payload, null, 2));
+              // Auto-refresh sidebar to show the new chat
+              setTimeout(loadChats, 500);
+            } else if (eventType === 'done') {
+              const donePayload = JSON.parse(dataStr);
+              if (donePayload.chatId) {
+                document.getElementById('chatId').value = donePayload.chatId;
+              }
+              const tokensInfo = donePayload.tokens
+                ? ` | in:${donePayload.tokens.input} out:${donePayload.tokens.output} cached:${donePayload.tokens.cached}`
+                : '';
+              const modelInfo = donePayload.model ? ` | model:${donePayload.model}` : '';
+              const escalatedInfo = donePayload.escalated ? ' | escalated:true' : '';
+              appendEvent('done', `chatId:${donePayload.chatId} | msgId:${donePayload.messageId}${tokensInfo}${modelInfo}${escalatedInfo}`);
+              // Refresh sidebar message count after turn completes
+              setTimeout(loadChats, 500);
+            } else if (eventType === 'title') {
+              const payload = JSON.parse(dataStr);
+              // Update the sidebar entry for this chat so the title appears immediately
+              const sidebarEl = document.querySelector(`[data-chat-id="${payload.chatId}"] .chat-title`);
+              if (sidebarEl) sidebarEl.textContent = payload.title;
+              appendEvent('title', `chatId:${payload.chatId} | "${escapeHtml(payload.title)}"`);
+            } else if (eventType === 'citation') {
+              const payload = JSON.parse(dataStr);
+              const div = document.createElement('div');
+              div.className = 'event citation';
+              div.innerHTML = `<strong>citation:</strong> <span class="citation-source">${escapeHtml(payload.source)}</span><span class="citation-score">score: ${Number(payload.score).toFixed(4)}</span><pre style="margin:2px 0 0 16px;color:#555">chunkId: ${escapeHtml(payload.chunkId)}</pre>`;
+              document.getElementById('events').appendChild(div);
+            } else if (eventType === 'tool_start') {
+              const payload = JSON.parse(dataStr);
+              const div = document.createElement('div');
+              div.id = `tool-${escapeHtml(payload.name)}`;
+              div.className = 'event tool-event';
+              div.innerHTML = `<strong>⚙ tool_start:</strong> <code>${escapeHtml(payload.name)}</code> <span class="tool-spinner">…</span>`;
+              document.getElementById('events').appendChild(div);
+            } else if (eventType === 'tool_done') {
+              const payload = JSON.parse(dataStr);
+              const existing = document.getElementById(`tool-${payload.name}`);
+              if (existing) {
+                existing.innerHTML = `<strong>✓ tool_done:</strong> <code>${escapeHtml(payload.name)}</code> <span class="tool-ms">${payload.ms} ms</span>`;
+              } else {
+                appendEvent('tool_done', `${escapeHtml(payload.name)} (${payload.ms} ms)`, 'tool-event');
+              }
+            } else if (eventType === 'safety') {
+              const payload = JSON.parse(dataStr);
+              const cls = payload.action === 'hard_block' ? 'safety-hard-block' : 'safety-soft-redirect';
+              const label = payload.action === 'hard_block' ? '⛔ safety (hard_block)' : '⚠️ safety (soft_redirect)';
+              appendEvent(label, payload.message, cls);
+            } else if (eventType === 'error') {
+              appendEvent('error', dataStr, 'error');
+            } else {
+              appendEvent(eventType, dataStr);
+            }
+          }
+        }
+      } catch (e) {
+        appendEvent('error', e.message, 'error');
+      }
+    }
+
+    function appendEvent(type, data, cls) {
+      const eventsDiv = document.getElementById('events');
+      const placeholder = eventsDiv.querySelector('em');
+      if (placeholder) placeholder.remove();
+
+      const div = document.createElement('div');
+      div.className = `event${cls ? ' ' + cls : ''}`;
+      div.innerHTML = `<strong>${escapeHtml(type)}:</strong><pre>${escapeHtml(data)}</pre>`;
+      eventsDiv.appendChild(div);
+      div.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    }
+
+    function clearEvents() {
+      document.getElementById('events').innerHTML = '<em style="color:#aaa">Events appear here…</em>';
+    }
+
+    function escapeHtml(str) {
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
+  </script>
+</body>
+</html>

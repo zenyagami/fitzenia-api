@@ -70,7 +70,7 @@ food-api/
     ├── config/
     │   └── ApiKeys.kt                  # reads env vars into a data class
     ├── model/
-    │   ├── FoodItem.kt                 # unified response model (see §Response models)
+    │   ├── FoodItem.kt                 # unified response model (see "Response models")
     │   └── ApiError.kt                 # error envelope
     ├── routes/
     │   └── FoodRoutes.kt               # GET /food/search, GET /food/barcode/{barcode}
@@ -116,7 +116,7 @@ Search for foods by text query. Aggregates results from all three sources.
 
 ```json
 {
-  "results": [ /* array of FoodItem — see §Response models */ ],
+  "results": [ /* array of FoodItem — see "Response models" */ ],
   "totalResults": 73,
   "page": 0,
   "pageSize": 25

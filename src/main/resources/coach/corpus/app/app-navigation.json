@@ -1,0 +1,19 @@
+{
+  "id": "app/app-navigation",
+  "title": "Fitzenia app navigation and key features overview",
+  "section": "app",
+  "locale": "en",
+  "source_uri": "coach/corpus/app/app-navigation.json",
+  "chunks": [
+    "Fitzenia is organized into three main tabs along the bottom of the screen: Dashboard (your daily home — food logging and the day's summary), Progress (weight, photos, and body-composition trends), and My Page (your profile, goals, and a way into Settings). Tap any tab to switch sections.",
+    "The Dashboard tab is your daily home and where you do most of your logging. It shows the day's meals — Breakfast, Morning Snack, Lunch, Afternoon Snack, Dinner, and Evening Snack — with the foods you've logged under each, your remaining calories and macros for the day, a calorie/macro ring, and a step count when Health is connected. A calendar strip at the top lets you move to a different day. To log food, tap the add button on the meal you want and pick a logging method.",
+    "Logging methods available when you add food to a meal: text search (Smart Search across a verified catalog plus food databases), barcode scan, AI photo scan (Premium), your recently logged foods, your saved favorites, your My Meals templates, and custom foods you've created. After picking a food, set the portion size and add it to the meal.",
+    "The Progress tab tracks your body over time. It includes your weight log and smoothed trend line, progress photos (front/side/back) with a side-by-side comparison view, BMI, your calorie and adaptive-TDEE history, and AI Progress Projections (a Premium tool that visualizes projected body-composition stages). This is where you review your long-term trend rather than any single day.",
+    "The My Page tab is your profile hub. It shows a read-only summary of your profile and current plan, and it's the way into the rest of your setup: open Settings from here, or tap into Edit Goal (change your goal direction, target weight, pace) and Edit Macros (adjust your macro split). Account options, units, theme, notifications, and legal pages all live under Settings, reached from My Page.",
+    "Onboarding guides new users through setup: welcome and terms, sign-up or sign-in (Google, Apple, or email), then biological sex and date of birth, height and weight, exercise habits, goal direction (Lose fat, Maintain, Gain muscle, or Body recomp), target weight, weekly pace, protein preference, optional body fat, and an optional Health Connect / Apple Health link. Fitzenia then shows a plan preview with your starting calorie and macro targets. Setup takes about two minutes.",
+    "My Meals lets you save meals you eat regularly as a reusable template. Build one from foods you've combined, give it a name (for example 'My Morning Oats'), and next time log the whole meal with a single tap. You can also build custom foods (enter the nutrition from a label) and custom meals from multiple ingredients. Access these from the add button in any meal section.",
+    "Fitzenia is offline-first: diary entries you create without a connection are saved locally immediately and sync to the cloud automatically once you're back online. Reads always come from the local database, so the app stays fast and usable offline. If something looks out of sync, reopening the app re-runs the sync.",
+    "Meal reminders are local notifications that remind you to log a specific meal at a time you choose. From the notification you can quick-add a suggested food or saved meal straight into that meal without opening the app. Configure reminders under My Page → Settings → Notifications.",
+    "The AI Coach is Fitzenia's Premium AI assistant. It answers questions about your nutrition, training, and how to use the app, and it can reference your own logged data — diary, weight history, and current calorie and macro targets — to give advice tailored to your actual progress. It is a Premium feature."
+  ]
+}

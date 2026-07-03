@@ -1,0 +1,19 @@
+{
+  "id": "recipes/dinners",
+  "title": "High-protein dinner recipes",
+  "section": "recipes",
+  "locale": "en",
+  "source_uri": "coach/corpus/recipes/dinners.json",
+  "chunks": [
+    "Baked Salmon with Sweet Potato (gluten-free, dairy-free). Roast a 150 g salmon fillet with lemon and herbs alongside 200 g sweet potato wedges and steamed greens. Serves 1. Per serving: ~520 kcal, 38 g protein, 42 g carbs, 22 g fat. Tags: gluten-free, dairy-free, omega-3, high-protein.",
+    "Chicken & Vegetable Traybake (gluten-free, meal-prep). Roast 180 g chicken thighs (skinless) with peppers, zucchini, red onion, and 150 g potatoes tossed in 1 tbsp olive oil and paprika. Serves 1. Per serving: ~540 kcal, 44 g protein, 38 g carbs, 22 g fat. Tags: gluten-free, high-protein, meal-prep, one-pan.",
+    "Lean Beef & Bean Chili (gluten-free, dairy-free, meal-prep). Simmer 130 g lean ground beef with kidney beans, tomatoes, onion, and chili spices; serve over 80 g cooked rice. Serves 1. Per serving: ~530 kcal, 40 g protein, 52 g carbs, 16 g fat. Tags: gluten-free, dairy-free, high-fiber, high-protein, meal-prep.",
+    "Turkey Meatballs with Marinara (dairy-free). Bake 150 g lean turkey meatballs and serve with marinara over 120 g cooked wholewheat pasta or zucchini noodles. Serves 1. Per serving: ~500 kcal, 42 g protein, 46 g carbs, 15 g fat. Tags: dairy-free, high-protein, meal-prep.",
+    "Cod with Lemon-Herb Couscous (high-protein). Pan-sear a 170 g cod fillet and serve over 100 g cooked couscous with peas, lemon, and parsley. Serves 1. Per serving: ~460 kcal, 42 g protein, 50 g carbs, 9 g fat. Tags: high-protein, low-fat, quick.",
+    "Tofu & Vegetable Curry (vegan, gluten-free). Simmer 200 g firm tofu with mixed vegetables in a light coconut-tomato curry; serve with 100 g cooked rice. Serves 1. Per serving: ~520 kcal, 26 g protein, 58 g carbs, 20 g fat. Tags: vegan, gluten-free, dairy-free, high-fiber.",
+    "Sheet-Pan Shrimp Fajitas (gluten-free, dairy-free). Roast 150 g shrimp with peppers and onions in fajita spices; serve in lettuce cups or 2 small corn tortillas with salsa. Serves 1. Per serving: ~380 kcal, 34 g protein, 32 g carbs, 12 g fat. Tags: gluten-free, dairy-free, high-protein, low-fat.",
+    "Chicken Stir-Fry with Noodles (dairy-free). Stir-fry 150 g chicken breast with mixed vegetables and a soy-garlic sauce; toss with 120 g cooked egg noodles. Serves 1. Per serving: ~540 kcal, 45 g protein, 56 g carbs, 13 g fat. Tags: dairy-free, high-protein, quick, meal-prep.",
+    "Stuffed Peppers with Turkey & Rice (gluten-free, meal-prep). Fill 2 bell peppers with 140 g lean ground turkey, 80 g cooked rice, tomato, and spices; bake until tender, topped with a little cheese. Serves 1. Per serving: ~480 kcal, 38 g protein, 44 g carbs, 16 g fat. Tags: gluten-free, high-protein, high-fiber, meal-prep.",
+    "Black Bean & Sweet Potato Bowl (vegan, gluten-free). Combine 150 g black beans, 200 g roasted sweet potato, avocado, corn, and a lime-cumin dressing over greens. Serves 1. Per serving: ~520 kcal, 19 g protein, 78 g carbs, 16 g fat. Tags: vegan, gluten-free, dairy-free, high-fiber."
+  ]
+}

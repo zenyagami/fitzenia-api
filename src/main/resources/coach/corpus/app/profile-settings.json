@@ -1,0 +1,19 @@
+{
+  "id": "app/profile-settings",
+  "title": "Profile and settings in Fitzenia",
+  "section": "app",
+  "locale": "en",
+  "source_uri": "coach/corpus/app/profile-settings.json",
+  "chunks": [
+    "Your Fitzenia profile stores the data used to calculate your calorie and macro targets: biological sex, age (from date of birth), current weight, height, and activity level. You view it on the My Page tab. Keeping it accurate matters — outdated profile data leads to inaccurate targets.",
+    "To update your profile, go to My Page → Settings → Profile. You can change your display name, profile photo, biological sex (used for the BMR calculation), date of birth, height, and current weight. Changes take effect immediately and trigger a recalculation of your calorie target.",
+    "Activity level reflects your baseline daily activity outside of intentionally logged exercise. Choose Sedentary for a desk job with little movement, Lightly Active for occasional walks and light activity, Moderately Active for regular exercise or an active job, Very Active for intense daily training, and Extra Active for physical labor or twice-daily workouts.",
+    "Units are set under My Page → Settings → Units. Fitzenia offers a Default option that follows your region plus Metric, US, and UK measurement systems. Weight shows in kilograms or pounds and height in centimeters or feet/inches depending on the system. Values are stored internally and converted on display, so you can switch at any time without losing data; the diary, charts, and targets update immediately.",
+    "Notifications are configured under My Page → Settings → Notifications. Fitzenia's notifications are meal reminders: enable reminders, then set a time for the meals you want to be reminded about. From a reminder you can quick-add a suggested food or saved meal directly into that meal. Reminders require notification permission, which the app will prompt for.",
+    "Fitzenia's interface language follows your device's language setting automatically; there is no separate in-app language picker. The app's content is localized into several languages (including English, Spanish, Portuguese, German, French, Italian, Dutch, Polish, and Japanese), and more are added with updates. To change the language, change your device's language.",
+    "Theme follows your device's light/dark system setting by default. You can override it under My Page → Settings (Appearance/Theme) and force Light or Dark regardless of the device setting; choosing System hands control back to the device.",
+    "Health data: Fitzenia can connect to Health Connect on Android or Apple Health on iOS to read steps, active and total calories burned, exercise sessions, and weight, and to write nutrition, exercise, and weight back. Manage and review connected data sources under My Page → Settings → Data Sources. Connecting is optional and you can skip it during onboarding.",
+    "Account options are under My Page → Settings → Profile and the related account screens. You can manage your subscription, and delete your account. Account deletion permanently removes your data — diary entries, weight logs, progress photos, goals, and targets — across the server and your device; it cannot be undone.",
+    "Fitzenia stores your data securely on Supabase, a GDPR-compliant cloud backend. Your food diary, weight logs, and progress photos are private and are not shared with third parties or used to train AI models. The AI coach uses your data only to personalize advice within your sessions, and on-device AI Insights run locally on your phone."
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "id": "nutrition/meal-timing-frequency",
+  "title": "Meal timing and frequency: what actually matters",
+  "section": "nutrition",
+  "locale": "en",
+  "source_uri": "coach/corpus/nutrition/meal-timing-frequency.json",
+  "chunks": [
+    "For body composition, total daily calories and protein matter far more than when or how often you eat. Whether you eat 2 meals or 6, you can lose fat or build muscle equally well as long as your daily totals are right. Choose a meal pattern that fits your life and keeps you consistent.",
+    "There is a modest benefit to spreading protein across 3–5 meals of roughly 0.4 g/kg each, because each protein feeding stimulates muscle protein synthesis. But this is a small optimization — if your schedule only allows 2–3 meals, hitting your daily protein target still captures most of the benefit.",
+    "The 'anabolic window' after training is much wider than once believed. You do not need protein within 30 minutes of finishing a workout. Getting a protein-containing meal within a few hours before or after training is more than enough for muscle growth.",
+    "Eating late at night does not inherently cause fat gain. A calorie is processed the same way regardless of the clock. If late eating leads you to overeat, that is a calorie problem, not a timing one. If a bedtime snack fits your targets and helps you sleep or adhere, it is fine.",
+    "Intermittent fasting (for example, eating within an 8-hour window) is just one way to control calories. It works for some people by naturally reducing intake, but it is not magic and is not required. Pick eating windows based on hunger patterns and convenience.",
+    "Pre-workout, a meal with carbs and some protein 1–3 hours before training can improve performance. If you train fasted and feel fine, that is okay too. Post-workout, prioritize getting your total daily protein and carbs; the exact timing is secondary.",
+    "The best meal schedule is the one you can repeat. Match meal frequency to your appetite, work, and training so that hitting your targets feels easy rather than forced."
+  ]
+}

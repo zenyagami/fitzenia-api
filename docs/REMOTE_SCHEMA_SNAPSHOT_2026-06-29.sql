@@ -1,0 +1,132 @@
+-- Remote schema snapshot — verified against BOTH dev (tpslgveyjldykkkhnifs) and
+-- production (anqvtpesmddllplyhkrc) Supabase via information_schema.columns.
+-- Re-pinned: 2026-07-02 (personal-data grounding upgrade / prompt v4).
+-- ⚠ The original 2026-06-29 pin was WRONG for user_profile (listed a non-existent
+--   `birth_year`; the real columns are `birth_date` + `sex`). That inaccuracy shipped a
+--   broken getUserProfile select (PostgREST 400 → {"error":"query_failed"}), which made the
+--   coach claim it had no access to personal metrics. Verify against live information_schema,
+--   not list_tables summaries, before trusting this file.
+-- Purpose: SQL contracts are verified against this snapshot.
+-- TOMBSTONE DECISIONS:
+--   weight_entry  : HAS is_deleted boolean → ADD "AND is_deleted = false"
+--   journey       : HAS is_deleted boolean → ADD "AND is_deleted = false"
+--   user_profile  : NO  is_deleted          → no filter
+--   user_goal     : NO  is_deleted (remote) → no filter (mobile .sq has it, remote does not)
+--   calorie_target: NO  is_deleted          → no filter
+--   diary_entry   : NO  is_deleted (hard-deleted remotely, confirmed) → no filter
+
+-- TABLE: public.user_profile   (verified dev + prod 2026-07-02)
+-- id               text          PRIMARY KEY
+-- name             text
+-- email            text
+-- birth_date       text          (ISO date string — NOT birth_year!)
+-- sex              text
+-- height_cm        double precision
+-- created_at       bigint        (epoch ms)
+-- last_modified_at bigint        (epoch ms)
+-- user_id          uuid
+-- avatar_url       text
+
+-- TABLE: public.user_goal   (verified dev + prod 2026-07-02)
+-- id                   text      PRIMARY KEY
+-- user_id              uuid
+-- goal_direction       text      (e.g. LOSE, MAINTAIN, GAIN)
+-- target_phase         text      (e.g. CUT, BULK, MAINTAIN, RECOMP)
+-- goal_weight_kg       double precision
+-- pace_tier            text
+-- activity_level       text
+-- body_fat_percent     double precision
+-- body_fat_range_key   text
+-- exercise_frequency   text
+-- steps_activity_band  text
+-- lifting_experience   text
+-- protein_preference   text
+-- adaptive_tdee_enabled boolean
+-- created_at           bigint    (epoch ms)
+-- last_modified_at     bigint    (epoch ms — order by this)
+-- NOTE: remote schema has no is_deleted column (mobile .sq does — not synced)
+
+-- TABLE: public.calorie_target   (verified dev 2026-07-02)
+-- id               text          PRIMARY KEY (TEXT not UUID)
+-- user_id          uuid
+-- formula          text
+-- bmr_kcal         bigint
+-- tdee_kcal        bigint
+-- target_kcal      bigint
+-- target_min_kcal  bigint
+-- target_max_kcal  bigint
+-- macro_mode       text
+-- protein_target_g bigint
+-- carbs_target_g   bigint
+-- fat_target_g     bigint
+-- applied_pace_tier text
+-- floor_clamped    bigint
+-- warning          text
+-- tdee_mode        text
+-- tdee_confidence  text
+-- created_at       bigint        (epoch ms)
+-- last_modified_at bigint        (epoch ms — order by this, not created_at)
+-- NOTE: no is_deleted column
+
+-- TABLE: public.calorie_target_history   (verified dev 2026-07-02; not yet used by tools)
+-- id / user_id / effective_from(text) / target_min_kcal / target_max_kcal / target_kcal /
+-- bmr_kcal / tdee_kcal / formula / macro_mode / protein_target_g / carbs_target_g /
+-- fat_target_g / applied_pace_tier / floor_clamped / warning / created_at / tdee_mode /
+-- tdee_confidence
+
+-- TABLE: public.diary_entry
+-- id             uuid/text
+-- user_id        uuid
+-- date           text          (YYYY-MM-DD in user-local time)
+-- meal_type      text          (BREAKFAST, LUNCH, DINNER, SNACK, ...)
+-- food_name_snapshot text      (display name of the food)
+-- calories_kcal  numeric
+-- protein_g      numeric
+-- carbs_g        numeric
+-- fat_g          numeric
+-- NOTE: hard-deleted remotely (no is_deleted, no deleted_at)
+
+-- TABLE: public.weight_entry   (verified dev 2026-07-02)
+-- id             text
+-- user_id        uuid
+-- date           text          (YYYY-MM-DD)
+-- weight_kg      double precision
+-- body_fat_percent double precision  nullable
+-- note           text
+-- source         text
+-- created_at     bigint        (epoch ms)
+-- is_deleted     boolean       ← PRESENT → must filter: AND is_deleted = false
+
+-- TABLE: public.journey   (verified dev 2026-07-02)
+-- id                      text
+-- user_id                 uuid
+-- goal_direction          text
+-- target_phase            text          (e.g. CUT, BULK, MAINTAIN, RECOMP)
+-- pace_tier               text
+-- target_weight_kg        double precision
+-- target_body_fat_percent double precision
+-- body_fat_percent        double precision
+-- body_fat_range_key      text
+-- activity_level          text
+-- exercise_frequency      text
+-- steps_activity_band     text
+-- lifting_experience      text
+-- protein_preference      text
+-- started_at              text          (ISO date string, cast to date for arithmetic)
+-- goal_date               text          nullable
+-- ended_at                text          nullable (null = active journey)
+-- start_weight_kg         double precision
+-- start_body_fat_percent  double precision
+-- end_weight_kg           double precision
+-- end_body_fat_percent    double precision
+-- created_at              bigint        (epoch ms)
+-- last_modified_at        bigint        (epoch ms)
+-- is_deleted              boolean       ← PRESENT → must filter: AND is_deleted = false
+
+-- TABLE: public.coach_user_note   (coach schema, RLS user-scoped)
+-- id             uuid
+-- user_id        uuid
+-- category       text
+-- note           text          (column is `note`, not `content`)
+-- created_at     timestamptz
+-- NOTE: no is_deleted (coach tables use hard-delete or archive pattern)

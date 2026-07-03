@@ -1,0 +1,19 @@
+{
+  "id": "app/tdee-algorithm",
+  "title": "How Fitzenia calculates your calorie target (seed TDEE + adaptive TDEE)",
+  "section": "app",
+  "locale": "en",
+  "source_uri": "coach/corpus/app/tdee-algorithm.json",
+  "chunks": [
+    "Fitzenia calculates your calorie target from your Total Daily Energy Expenditure (TDEE) — the calories your body burns in a day, combining your Basal Metabolic Rate (BMR) with activity. There are two stages: a formula-based seed at onboarding, and an adaptive TDEE that learns your real expenditure from your logged data over time. The adaptive stage is Fitzenia's core differentiator.",
+    "At onboarding, Fitzenia seeds your BMR with a formula. By default it uses the Mifflin–St Jeor equation. If you enter a body fat percentage in a valid range, it instead uses the Katch–McArdle equation (370 + 21.6 × lean body mass in kg), which is based on lean mass and is more precise when body fat is known.",
+    "Mifflin–St Jeor for men: BMR = (10 × weight kg) + (6.25 × height cm) − (5 × age) + 5. For women: BMR = (10 × weight kg) + (6.25 × height cm) − (5 × age) − 161. This BMR is then multiplied by an activity factor to get the seed TDEE.",
+    "Activity multipliers Fitzenia applies to BMR for the seed TDEE: Sedentary ×1.2, Lightly Active ×1.375, Moderately Active ×1.55, Very Active ×1.725, Extra Active ×1.9. The result is your starting maintenance estimate — a reasonable first guess, not a final answer.",
+    "Adaptive TDEE: once you've been logging, Fitzenia stops trusting the formula and back-calculates your actual maintenance from your data. It smooths your body-weight series with an exponential moving average to remove daily water-and-food noise, compares the weight trend against your average calorie intake over a tracking window, and infers the TDEE that explains the change. This means your target reflects your real metabolism, including any individual deviation from the formula.",
+    "The adaptive estimate carries a confidence level — Low, Medium, or High — that rises as you accumulate more complete logging days. When confidence is Medium or High, Fitzenia uses the adaptive TDEE to set your target; when it's Low, the adaptive number is shown for context but the formula-based seed still drives the target. Consistent daily logging is what moves confidence toward High.",
+    "Your maintenance TDEE is the amount that holds your weight. To lose fat you eat below it (a deficit); to gain muscle you eat above it (a surplus). Fitzenia applies the deficit or surplus implied by your goal and pace on top of whichever TDEE is currently authoritative (seed or adaptive).",
+    "For fat loss, Fitzenia typically targets a deficit of about 300–500 kcal/day below maintenance (roughly 0.3–0.5 kg/week). Larger deficits (500–750 kcal) can be set but raise the risk of muscle loss and are best reserved for higher body fat. For muscle gain, it favors a lean surplus of about 150–300 kcal/day (roughly 0.2–0.3 kg/week).",
+    "Fitzenia recalculates as your inputs change: editing your weight, height, age, or activity level updates the seed, and the adaptive engine continuously re-reads your intake-and-weight trend. As you lose or gain weight your maintenance shifts, and the app re-aligns your target to keep progress on track. You can review the adaptive estimate, its confidence, and the trend on the Plan Hub / adaptive-TDEE detail screen.",
+    "TDEE — seed or adaptive — is still an estimate. The formula can be off by ±10–15% for any individual, which is exactly why the adaptive stage exists. If you've logged consistently but your weight isn't moving as expected, keep logging so confidence climbs, or nudge your target by ±100–200 kcal and watch the trend for about two weeks before changing again."
+  ]
+}

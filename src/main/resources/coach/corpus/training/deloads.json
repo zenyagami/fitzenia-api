@@ -1,0 +1,16 @@
+{
+  "id": "training/deloads",
+  "title": "Deloads: planned recovery weeks",
+  "section": "training",
+  "locale": "en",
+  "source_uri": "coach/corpus/training/deloads.json",
+  "chunks": [
+    "A deload is a planned, temporary reduction in training stress — usually a week — that lets accumulated fatigue dissipate so you can come back stronger. It is a proactive recovery tool, not a sign of weakness, and it often unlocks progress that more grinding cannot.",
+    "Over weeks of hard training, fatigue builds up faster than it fully clears between sessions. A deload gives your muscles, joints, connective tissue, and nervous system a chance to catch up, so the fitness you built can show through once fatigue drops.",
+    "Common ways to deload: keep the same exercises but cut the weight by about 40–60%, or keep the weight and cut the number of sets roughly in half, or reduce both moderately. The goal is to move and stay sharp while doing clearly less total work than usual.",
+    "Many lifters deload every 4–8 weeks, or whenever signs of accumulated fatigue appear. Beginners often need them less often because they recover quickly and use lighter absolute loads; intermediate and advanced lifters benefit more regularly.",
+    "Signs you may need a deload include stalled or declining lifts across multiple exercises, nagging aches, poor sleep, low motivation, and elevated resting fatigue. Taking a deload before these become severe keeps you progressing rather than forcing a longer break later.",
+    "A deload is not a week off the couch. Continuing to train lightly maintains technique, keeps the habit intact, and promotes blood flow and recovery better than complete inactivity for most people.",
+    "Expect to feel a little restless or 'too fresh' during a deload — that is the point. The payoff usually shows the following week, when lifts that felt heavy start moving well again."
+  ]
+}

@@ -1,0 +1,41 @@
+apiVersion: run.googleapis.com/v1
+kind: Job
+metadata:
+  name: coach-retention-sweeper
+  labels:
+    cloud.googleapis.com/location: europe-north1
+spec:
+  template:
+    spec:
+      # Single task. The sweep is a single idempotent DELETE; concurrent runs are
+      # harmless (the second finds fewer/zero eligible rows).
+      parallelism: 1
+      taskCount: 1
+      template:
+        spec:
+          # One DELETE + cascade. Generous headroom for cold starts / large backlogs.
+          timeoutSeconds: 600
+          # No retries — a failed run logs and exits; tomorrow's run picks up the same set.
+          maxRetries: 0
+          containers:
+          - name: coach-retention-sweeper
+            image: gcr.io/PROJECT_ID/fitzenia-coach-retention:IMAGE_TAG
+            resources:
+              limits:
+                cpu: "1"
+                memory: "512Mi"
+            env:
+            - name: APP_ENVIRONMENT
+              value: "PRODUCTION"
+            # The sweeper reads only these two from env (it builds its own minimal client,
+            # not ConfigLoader). Wire from Secret Manager — never bake into the image.
+            - name: SUPABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: SUPABASE_URL
+                  key: latest
+            - name: SUPABASE_SERVICE_ROLE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: SUPABASE_SERVICE_ROLE_KEY
+                  key: latest

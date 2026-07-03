@@ -1,0 +1,16 @@
+{
+  "id": "nutrition/hydration",
+  "title": "Hydration for training and body composition",
+  "section": "nutrition",
+  "locale": "en",
+  "source_uri": "coach/corpus/nutrition/hydration.json",
+  "chunks": [
+    "Water is involved in nearly every process in your body, including digestion, nutrient transport, joint lubrication, temperature control, and muscle contraction. Even mild dehydration can reduce strength, endurance, focus, and mood, so staying hydrated directly supports better training.",
+    "A practical daily target is roughly 30–40 ml of fluid per kg of body weight, which is about 2.5–3.5 liters for many adults, more in hot weather or with heavy sweating. Your needs include water from food and other drinks, not just plain water.",
+    "A simple self-check is urine color: pale straw-yellow usually means well hydrated, while dark yellow suggests you need more fluid. Thirst is a late signal, so sip regularly through the day rather than waiting until you feel thirsty.",
+    "During longer or sweaty workouts you also lose electrolytes — sodium, potassium, and magnesium. For sessions under about an hour, water is fine; for longer or very sweaty sessions, adding some sodium (electrolyte drink or a pinch of salt in water) helps maintain performance.",
+    "Drinking a glass of water before meals can modestly reduce appetite and help with portion control during a cut. Staying hydrated also reduces the false 'hunger' that is sometimes actually thirst.",
+    "Day-to-day scale swings are often water, not fat. High sodium, carbs, stress, poor sleep, and intense training all cause temporary water retention. This is harmless and resolves on its own — judge fat loss by multi-week trends.",
+    "Drinking very large amounts of water far beyond thirst offers no extra benefit and, in rare extremes, can be harmful. Aim for steady, sensible intake. If you have a heart or kidney condition that affects fluid intake, follow your doctor's guidance instead of general targets."
+  ]
+}

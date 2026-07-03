@@ -247,6 +247,18 @@ Photo-AI estimate is **not** persisted to `weight_entry` — it lives only on th
 
 ---
 
+## AI Coach ("Fitzy")
+
+A premium chat coach that runs as a **separate Cloud Run service** from this food API — same codebase, a different Jib image + module (`coach.conf` → `com.zenthek.coach.CoachApplicationKt.module`, built via `-PtargetService=coach`). It streams SSE answers grounded in a curated RAG corpus + the user's own logged data, remembers cross-chat preferences, enforces a monthly token budget, and hard-blocks unsafe topics before the LLM. Primary model `gemini-3.1-flash-lite`, escalation `gemini-3.5-flash` (constants in `com.zenthek.coach.config.CoachModels`); embeddings `gemini-embedding-2` (768-dim). Premium is enforced server-side via `user_entitlement` (RevenueCat-driven; see Entitlements).
+
+- **Full design + ops runbook:** [`docs/AI_COACH.md`](docs/AI_COACH.md). **Client wire contract:** [`docs/AI_COACH_CLIENT.md`](docs/AI_COACH_CLIENT.md). **Entitlements:** [`docs/ENTITLEMENTS.md`](docs/ENTITLEMENTS.md).
+- **Schema:** `db/migrations/005_coach_baseline.sql` (12 tables incl. the `coach_internal` schema; applied to dev **and** prod). Coach source lives under `src/main/kotlin/com/zenthek/coach/`; RevenueCat sync under `com/zenthek/revenuecat/`.
+- **Three Cloud Run Jobs:** `coach-ingest` (KB corpus embed), `coach-retention` (12-month sweep), `coach-rc-sweeper` (RevenueCat event recovery).
+- **The `POST /webhooks/revenuecat` route is on THIS `fitzenia-api` service**, not the coach service. Existing subscribers backfill into `user_entitlement` via **lazy sync-on-miss** in the coach `PremiumGate`.
+- Local run: `./gradlew runCoach`. **Status:** feature complete and ready to operate — see `docs/AI_COACH.md` → Status.
+
+---
+
 ## OFF mirror
 
 Production mirrors the entire Open Food Facts catalog into Supabase (`public.off_food`) so the API can resolve barcodes and search candidates without round-tripping to OFF on every request. Reads are gated by `OFF_MIRROR_READ_ENABLED` (default true in prod, false in dev); when disabled, behavior is byte-identical to the pre-mirror code path.

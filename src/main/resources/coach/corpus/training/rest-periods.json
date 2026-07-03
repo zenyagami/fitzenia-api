@@ -1,0 +1,16 @@
+{
+  "id": "training/rest-periods",
+  "title": "How long to rest between sets",
+  "section": "training",
+  "locale": "en",
+  "source_uri": "coach/corpus/training/rest-periods.json",
+  "chunks": [
+    "Rest periods between sets affect how well you recover strength for the next set. Resting too little forces you to cut the next set short due to fatigue, reducing the quality volume that drives growth. Longer rest generally lets you perform more reps with better form.",
+    "For compound lifts (squats, deadlifts, presses, rows), rest about 2–3 minutes between hard sets. These movements are demanding, and full recovery lets you keep your reps and load high, which is where most of the growth and strength stimulus comes from.",
+    "For isolation exercises (curls, lateral raises, leg curls), 1–2 minutes is usually enough. Smaller muscles recover faster, and the slightly higher fatigue is easy to manage at lighter loads.",
+    "Research shows longer rest (2–3 minutes) tends to build more muscle and strength than very short rest (under 1 minute), mainly because you maintain better performance across sets. Short rest is not 'better for toning' — it just limits how much quality work you can do.",
+    "Use rest strategically with your time. Supersetting non-competing muscles (for example, a back exercise paired with a chest exercise) lets one muscle rest while you train another, saving time without sacrificing recovery for either.",
+    "Let performance guide rest more than a strict clock. If you are still breathing hard or your last set's reps dropped sharply, take a bit longer. The goal of rest is to walk into the next set able to perform near your best.",
+    "When time is tight, prioritize full rest on your heaviest compound lifts and trim rest on accessory work. That keeps the most important, highest-stimulus sets at full quality."
+  ]
+}

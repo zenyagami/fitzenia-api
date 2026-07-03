@@ -5,12 +5,16 @@ import com.zenthek.auth.AuthenticatedUserContext
 import com.zenthek.auth.configureAuthentication
 import com.zenthek.model.ImageAnalyzer
 import com.zenthek.model.ErrorResponse
+import com.zenthek.revenuecat.RevenueCatEntitlementGateway
+import com.zenthek.revenuecat.RevenueCatRestClient
+import com.zenthek.revenuecat.RevenueCatSyncService
 import com.zenthek.routes.RateLimitNames
 import com.zenthek.routes.configureRouting
 import com.zenthek.service.AccountService
 import com.zenthek.service.AiProgressProjectionService
 import com.zenthek.service.FoodService
 import com.zenthek.service.SmartSearchOrchestrator
+import com.zenthek.service.ForbiddenException
 import com.zenthek.service.UnauthorizedException
 import com.zenthek.service.UpstreamFailureException
 import com.zenthek.service.UserProfileService
@@ -196,6 +200,28 @@ fun Application.module() {
         config = config.aiProgressProjection,
     )
 
+    // RevenueCat → Supabase entitlement sync. Constructed only when both secrets
+    // are present; otherwise the webhook route short-circuits to 503.
+    val revenueCatSync: RevenueCatSyncService? = if (config.revenueCat.configured) {
+        log.info("RevenueCat webhook: enabled")
+        RevenueCatSyncService(
+            gateway = RevenueCatEntitlementGateway(
+                httpClient = httpClient,
+                supabaseUrl = config.supabase.normalizedUrl,
+                serviceRoleKey = config.apiKeys.supabaseServiceRoleKey,
+            ),
+            rest = RevenueCatRestClient(
+                httpClient = httpClient,
+                restApiKey = config.revenueCat.restApiKey!!,
+                restBaseUrl = config.revenueCat.restBaseUrl,
+            ),
+            webhookAuth = config.revenueCat.webhookAuth!!,
+        )
+    } else {
+        log.info("RevenueCat webhook: disabled (REVENUECAT_* not set)")
+        null
+    }
+
     warnIfRemoteMode(config.supabase)
     probeJwks(httpClient, config.supabase)
 
@@ -203,7 +229,7 @@ fun Application.module() {
     configureStatusPages()
     configureRateLimit()
     configureAuthentication(config.supabase, supabaseClient)
-    configureRouting(foodService, smartSearch, imageAnalyzer, userProfileService, accountService, aiProgressProjectionService)
+    configureRouting(foodService, smartSearch, imageAnalyzer, userProfileService, accountService, aiProgressProjectionService, revenueCatSync)
 }
 
 fun Application.configureRateLimit() {
@@ -290,6 +316,12 @@ fun Application.configureStatusPages() {
             call.respond(
                 HttpStatusCode.BadRequest,
                 ErrorResponse("Invalid request body")
+            )
+        }
+        exception<ForbiddenException> { call, cause ->
+            call.respond(
+                HttpStatusCode.Forbidden,
+                ErrorResponse(cause.message ?: "Forbidden")
             )
         }
         exception<UnauthorizedException> { call, cause ->

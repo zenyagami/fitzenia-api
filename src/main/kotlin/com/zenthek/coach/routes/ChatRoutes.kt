@@ -1,0 +1,813 @@
+package com.zenthek.coach.routes
+
+import com.zenthek.auth.SUPABASE_AUTH_PROVIDER
+import com.zenthek.auth.requireAuthenticatedUser
+import com.zenthek.auth.requireBearerAccessToken
+import com.zenthek.coach.agent.CoachAgentFactory
+import com.zenthek.coach.agent.CoachFrame
+import com.zenthek.coach.agent.CoachPromptVersion
+import com.zenthek.coach.agent.SystemPromptV1
+import com.zenthek.coach.agent.safety.ClassifyResult
+import com.zenthek.coach.agent.safety.HardBlockClassifier
+import com.zenthek.coach.agent.safety.InputSanitizer
+import com.zenthek.coach.agent.safety.OutputSanitizer
+import com.zenthek.coach.agent.tools.CoachToolRunner
+import com.zenthek.coach.auth.PremiumGate
+import com.zenthek.coach.compaction.ConversationCompactor
+import com.zenthek.coach.config.CoachModels
+import com.zenthek.coach.persistence.BudgetGateway
+import com.zenthek.coach.persistence.ChatGateway
+import com.zenthek.coach.persistence.ChatSummaryRow
+import com.zenthek.coach.persistence.MessageDetailRow
+import com.zenthek.coach.persistence.NotesGateway
+import com.zenthek.coach.rag.HybridRetriever
+import com.zenthek.coach.rag.RetrievedChunk
+import com.zenthek.coach.stream.BudgetExceededPayload
+import com.zenthek.coach.stream.ChatCreatedPayload
+import com.zenthek.coach.stream.CitationPayload
+import com.zenthek.coach.stream.DonePayload
+import com.zenthek.coach.stream.SafetyPayload
+import com.zenthek.coach.stream.SseErrorPayload
+import com.zenthek.coach.stream.TitlePayload
+import com.zenthek.coach.stream.ToolDonePayload
+import com.zenthek.coach.stream.ToolStartPayload
+import com.zenthek.coach.stream.TokenPayload
+import com.zenthek.coach.stream.TokenUsage
+import com.zenthek.coach.stream.sendSseEvent
+import com.zenthek.routes.RateLimitNames
+import io.ktor.client.HttpClient
+import io.ktor.http.CacheControl
+import io.ktor.utils.io.ClosedWriteChannelException
+import io.ktor.http.ContentType
+import io.ktor.http.HttpStatusCode
+import io.ktor.server.application.Application
+import io.ktor.server.application.ApplicationCall
+import io.ktor.server.auth.authenticate
+import io.ktor.server.plugins.ratelimit.RateLimitName
+import io.ktor.server.plugins.ratelimit.rateLimit
+import io.ktor.server.request.receive
+import io.ktor.server.response.cacheControl
+import io.ktor.server.response.respond
+import io.ktor.server.response.respondBytesWriter
+import io.ktor.server.response.respondText
+import io.ktor.server.routing.delete
+import io.ktor.server.routing.get
+import io.ktor.server.routing.post
+import io.ktor.server.routing.route
+import io.ktor.server.routing.routing
+import ai.koog.prompt.streaming.StreamFrame
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
+import java.time.LocalDate
+import java.time.ZoneId
+import java.time.ZoneOffset
+import java.time.format.DateTimeFormatter
+import java.time.format.TextStyle
+import java.util.Locale
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
+import org.slf4j.LoggerFactory
+import java.util.concurrent.ConcurrentHashMap
+
+private val log = LoggerFactory.getLogger("com.zenthek.coach.routes.ChatRoutes")
+private val inFlight = ConcurrentHashMap<String, Unit>()
+private val sseJson = Json { ignoreUnknownKeys = true }
+private val classifier = HardBlockClassifier()
+
+// ~20k token input cap (heuristic: 4 chars/token)
+private const val INPUT_CHAR_CAP = 80_000
+private const val STREAM_TIMEOUT_MS = 120_000L
+// Flat token estimate for the system prompt + tool descriptions + KB envelope,
+// added to the (chars/4) estimate of the message + history when reserving budget.
+// Over-reserving is safe — reconcile corrects to actuals at turn-end.
+private const val BUDGET_SYSTEM_PROMPT_TOKEN_ESTIMATE = 1_500
+// Chunks below this hybrid score are noise (e.g. recipes returned for diary/personal queries).
+private const val MIN_KB_SCORE = 0.10
+
+// The system prompt asks the model to cite grounding inline as "(KB: doc-id)" for retrieval
+// faithfulness. Those raw doc-ids are internal — strip them before display/persistence.
+// Structured `citation` SSE events carry the same source attribution for the client instead.
+// Tolerant of the model's formatting drift: "( KB:nutrition/x)", "(KB: a/b, c/d)", any case.
+private val KB_CITATION_REGEX = Regex("""\(\s*KB\s*:[^)]*\)""", RegexOption.IGNORE_CASE)
+
+private fun stripKbCitations(text: String): String =
+    text.replace(KB_CITATION_REGEX, "")
+        .replace(Regex("""[ \t]+([.,;:!?])"""), "$1") // drop space left before punctuation
+        .replace(Regex("""[ \t]{2,}"""), " ")          // collapse doubled spaces
+        .replace(Regex("""[ \t]+\n"""), "\n")           // trailing spaces before newline
+        .trim()
+
+private fun publicToolStatusName(@Suppress("UNUSED_PARAMETER") internalName: String): String = "thinking"
+
+private const val GENERIC_FALLBACK =
+    "I'm sorry, I wasn't able to generate a safe response for that. Please try rephrasing, or ask a general nutrition or fitness question."
+
+@Serializable
+data class SendMessageRequest(
+    val content: String,
+    val locale: String,
+    val userTz: String? = null,
+)
+
+fun Application.configureCoachRouting(
+    chatGateway: ChatGateway,
+    premiumGate: PremiumGate,
+    agentFactory: CoachAgentFactory,
+    hybridRetriever: HybridRetriever,
+    httpClient: HttpClient,
+    supabaseUrl: String,
+    supabaseAnonKey: String,
+    notesGateway: NotesGateway,
+    compactor: ConversationCompactor,
+    budgetGateway: BudgetGateway,
+) {
+    routing {
+        get("/health") {
+            call.respondText("""{"status":"ok"}""", ContentType.Application.Json, HttpStatusCode.OK)
+        }
+
+        authenticate(SUPABASE_AUTH_PROVIDER) {
+            rateLimit(RateLimitName(RateLimitNames.COACH_MESSAGE)) {
+                post("/api/coach/messages") {
+                    processMessage(call, chatIdFromPath = null, chatGateway, premiumGate, agentFactory, hybridRetriever, httpClient, supabaseUrl, supabaseAnonKey, notesGateway, compactor, budgetGateway)
+                }
+                route("/api/coach/chats/{chatId}") {
+                    post("/messages") {
+                        val chatId = call.parameters["chatId"]
+                            ?: return@post call.respond(
+                                HttpStatusCode.BadRequest,
+                                mapOf("error" to "Missing chatId")
+                            )
+                        processMessage(call, chatIdFromPath = chatId, chatGateway, premiumGate, agentFactory, hybridRetriever, httpClient, supabaseUrl, supabaseAnonKey, notesGateway, compactor, budgetGateway)
+                    }
+                }
+            }
+
+            rateLimit(RateLimitName(RateLimitNames.COACH_MANAGEMENT)) {
+                get("/api/coach/chats") {
+                    premiumGate.requirePremium(call)
+                    val user = call.requireAuthenticatedUser()
+                    val chats: List<ChatSummaryRow> = chatGateway.listChats(user.userId)
+                    call.respond(HttpStatusCode.OK, chats)
+                }
+                get("/api/coach/chats/{chatId}/messages") {
+                    premiumGate.requirePremium(call)
+                    val user = call.requireAuthenticatedUser()
+                    val chatId = call.parameters["chatId"]
+                        ?: return@get call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Missing chatId"))
+                    val messages: List<MessageDetailRow> = chatGateway.getMessagesFull(chatId, user.userId)
+                    call.respond(HttpStatusCode.OK, messages)
+                }
+                delete("/api/coach/chats/{chatId}") {
+                    premiumGate.requirePremium(call)
+                    val user = call.requireAuthenticatedUser()
+                    val chatId = call.parameters["chatId"]
+                        ?: return@delete call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Missing chatId"))
+                    val archived = chatGateway.archiveChat(chatId, user.userId)
+                    if (!archived) {
+                        call.respond(HttpStatusCode.NotFound, mapOf("error" to "Chat not found"))
+                        return@delete
+                    }
+                    chatGateway.deleteChatMessages(chatId, user.userId)
+                    call.respond(HttpStatusCode.NoContent)
+                }
+            }
+        }
+    }
+}
+
+private suspend fun processMessage(
+    call: ApplicationCall,
+    chatIdFromPath: String?,
+    chatGateway: ChatGateway,
+    premiumGate: PremiumGate,
+    agentFactory: CoachAgentFactory,
+    hybridRetriever: HybridRetriever,
+    httpClient: HttpClient,
+    supabaseUrl: String,
+    supabaseAnonKey: String,
+    notesGateway: NotesGateway,
+    compactor: ConversationCompactor,
+    budgetGateway: BudgetGateway,
+) {
+    // Premium check happens before SSE so StatusPages can map ForbiddenException → 403
+    premiumGate.requirePremium(call)
+
+    val user = call.requireAuthenticatedUser()
+    val bearerToken = call.requireBearerAccessToken()
+    val body = call.receive<SendMessageRequest>()
+    val content = body.content.trim()
+    if (content.isBlank()) {
+        call.respond(HttpStatusCode.BadRequest, mapOf("error" to "content must not be blank"))
+        return
+    }
+
+    // Reject oversized input before opening the SSE stream.
+    if (content.length > INPUT_CHAR_CAP) {
+        call.respond(
+            HttpStatusCode.BadRequest,
+            mapOf("error" to "INPUT_TOO_LONG", "message" to "Message exceeds the maximum input length")
+        )
+        return
+    }
+
+    val flightKey = "${user.userId}:${chatIdFromPath ?: "__new__"}"
+    if (inFlight.putIfAbsent(flightKey, Unit) != null) {
+        log.warn("[COACH] IN_FLIGHT conflict userId={} key={}", user.userId, flightKey)
+        call.respond(
+            HttpStatusCode.Conflict,
+            mapOf("error" to "IN_FLIGHT", "message" to "A message is already being processed for this chat")
+        )
+        return
+    }
+
+    var lockReleased = false
+    try {
+        call.response.cacheControl(CacheControl.NoCache(null))
+        call.respondBytesWriter(contentType = ContentType.Text.EventStream) {
+            // Budget reservation lifecycle: settle each reservation exactly once.
+            var reservationId: String? = null
+            var budgetSettled = false
+            try {
+                // Lazy chat creation — emit chat_created before persisting the first message
+                val chatId: String
+                if (chatIdFromPath == null) {
+                    val chatRow = chatGateway.createChat(user.userId, body.locale)
+                    chatId = chatRow.id
+                    sendSseEvent(
+                        "chat_created",
+                        sseJson.encodeToString(
+                            ChatCreatedPayload.serializer(),
+                            ChatCreatedPayload(chatId = chatId, title = chatRow.title)
+                        )
+                    )
+                } else {
+                    chatId = chatIdFromPath
+                }
+
+                val requestId = java.util.UUID.randomUUID().toString()
+                // Non-fatal: dev Supabase cold-starts can exceed 30s; proceed with empty history rather than failing.
+                val rawHistory = runCatching { chatGateway.getMessages(chatId, limit = 50) }
+                    .onFailure { e -> log.warn("[COACH] history_load_failed chatId={}", chatId, e) }
+                    .getOrElse { emptyList() }
+                    .filter { it.role in setOf("user", "assistant") }
+
+                val isFirstTurn = rawHistory.isEmpty()
+
+                val (history, summaryContext) = runCatching {
+                    compactor.prepareHistory(chatId, user.userId, rawHistory)
+                }.onFailure { e -> log.warn("[COACH] compaction_failed chatId={}", chatId, e) }
+                    .getOrElse { com.zenthek.coach.compaction.PreparedHistory(rawHistory, null) }
+                    .let { Pair(it.history, it.summaryContext) }
+
+                // Persist the raw user message — non-fatal so the LLM turn still runs on save failure.
+                runCatching { chatGateway.insertMessage(chatId, user.userId, "user", content, requestId) }
+                    .onFailure { e -> log.warn("[COACH] user_msg_persist_failed chatId={}", chatId, e) }
+
+                // Input sanitization.
+                val sanitized = InputSanitizer.sanitize(content)
+
+                // Hard-block classifier + pre-LLM escalation signal.
+                var classifierWantsEscalation = false
+                when (val classifyResult = classifier.classify(sanitized, body.locale)) {
+                    is ClassifyResult.Escalate -> {
+                        // COMPLEX_REASONING: don't block, but flag the turn for a Pro retry.
+                        log.info(
+                            "[COACH-ESCALATE] classifier_signal userId={} class={} chatId={}",
+                            user.userId, classifyResult.blockClass, chatId
+                        )
+                        classifierWantsEscalation = true
+                    }
+                    is ClassifyResult.HardBlock -> {
+                        val safetyMsg = classifyResult.message
+                        log.info(
+                            "[COACH-SAFETY] hard_block userId={} class={} chatId={}",
+                            user.userId, classifyResult.blockClass, chatId
+                        )
+                        // Persist canned assistant response with safety_action
+                        val msgRow = chatGateway.insertMessage(
+                            chatId = chatId,
+                            userId = user.userId,
+                            role = "assistant",
+                            content = safetyMsg,
+                            requestId = requestId,
+                            safetyAction = "hard_block",
+                        )
+                        sendSseEvent(
+                            "safety",
+                            sseJson.encodeToString(
+                                SafetyPayload.serializer(),
+                                SafetyPayload(action = "hard_block", message = safetyMsg)
+                            )
+                        )
+                        sendSseEvent(
+                            "done",
+                            sseJson.encodeToString(
+                                DonePayload.serializer(),
+                                DonePayload(
+                                    chatId = chatId,
+                                    messageId = msgRow.id,
+                                    tokens = TokenUsage(input = 0, output = 0, cached = 0),
+                                    model = "",
+                                    escalated = false,
+                                )
+                            )
+                        )
+                        return@respondBytesWriter
+                    }
+                    is ClassifyResult.Pass -> Unit // continue to LLM
+                }
+
+                // Atomic monthly budget: enforced before any LLM work. Hard-blocks
+                // above return early and are never charged. The reservation is keyed on the
+                // per-turn requestId, so a retried turn reuses its reservation (idempotent).
+                val (capMessages, capTokens) = CoachModels.budgetCapsFor(CoachModels.PRIMARY)
+                val nowUtc = LocalDate.now(ZoneOffset.UTC)
+                val periodYyyymm = nowUtc.year * 100 + nowUtc.monthValue
+                val estimatedInputTokens =
+                    ((sanitized.length + history.sumOf { it.content.length } + (summaryContext?.length ?: 0)) / 4) +
+                        BUDGET_SYSTEM_PROMPT_TOKEN_ESTIMATE
+                // Fail-open: a transient budget RPC error must not block a paying premium user.
+                val reserveResult = runCatching {
+                    budgetGateway.reserve(
+                        userId      = user.userId,
+                        requestId   = requestId,
+                        period      = periodYyyymm,
+                        inputMax    = estimatedInputTokens,
+                        outputMax   = CoachModels.RESERVED_OUTPUT_TOKENS,
+                        capMessages = capMessages,
+                        capTokens   = capTokens,
+                    )
+                }.onFailure { e ->
+                    log.warn("[COACH-BUDGET] reserve_failed userId={} chatId={}, proceeding uncharged", user.userId, chatId, e)
+                }.getOrNull()
+
+                if (reserveResult != null && !reserveResult.allowed) {
+                    val nextMonth = nowUtc.withDayOfMonth(1).plusMonths(1)
+                    val resetAtIso = DateTimeFormatter.ISO_INSTANT.format(
+                        nextMonth.atStartOfDay(ZoneOffset.UTC).toInstant()
+                    )
+                    val resetLabel = "${nextMonth.month.getDisplayName(TextStyle.FULL, Locale.ENGLISH)} 1"
+                    log.info(
+                        "[COACH-BUDGET] budget_exceeded userId={} chatId={} reason={}",
+                        user.userId, chatId, reserveResult.reason
+                    )
+                    sendSseEvent(
+                        "error",
+                        sseJson.encodeToString(
+                            BudgetExceededPayload.serializer(),
+                            BudgetExceededPayload(
+                                code = "BUDGET_EXCEEDED",
+                                resetAt = resetAtIso,
+                                message = "You've reached this month's coach limit. Resets $resetLabel.",
+                            )
+                        )
+                    )
+                    return@respondBytesWriter
+                }
+                reservationId = reserveResult?.reservationId
+
+                // Per-request tool runner: bearer token is per-request and never cached.
+                val userTz = body.userTz?.let { runCatching { ZoneId.of(it) }.getOrNull() }
+                    ?: ZoneId.of(CoachModels.USER_TZ_FALLBACK)
+                val userLocalDate = LocalDate.now(userTz)
+                val toolRunner = CoachToolRunner(
+                    httpClient      = httpClient,
+                    supabaseUrl     = supabaseUrl,
+                    supabaseAnonKey = supabaseAnonKey,
+                    bearerToken     = bearerToken,
+                    userLocalDate   = userLocalDate,
+                    hybridRetriever = hybridRetriever,
+                    notesGateway    = notesGateway,
+                    userId          = user.userId,
+                )
+
+                // Pre-fetch the user's core stats in parallel; non-fatal.
+                // Profile/goal/weight-trend are pre-loaded every turn so identity questions
+                // ("what's my weight / ideal weight") never depend on the tool loop.
+                // On the first turn only, also inject the user's last 10 coach notes.
+                val userContext: String? = runCatching {
+                    coroutineScope {
+                        val t = async { toolRunner.getCurrentTargets() }
+                        val m = async { toolRunner.getTodayMacros() }
+                        val p = async { toolRunner.getUserProfile() }
+                        val g = async { toolRunner.getUserGoal() }
+                        val w = async { toolRunner.getWeightTrend(weeks = 4) }
+                        val n = if (history.isEmpty()) async { notesGateway.getUserNotes(user.userId, limit = 10) } else null
+                        val prefetched = listOf(
+                            "getCurrentTargets" to t.await(),
+                            "getTodayMacros"    to m.await(),
+                            "getUserProfile"    to p.await(),
+                            "getUserGoal"       to g.await(),
+                            "getWeightTrend"    to w.await(),
+                        )
+                        val notes = n?.await() ?: emptyList()
+                        // Defense in depth: discard pre-fetched context if it contains closing tags.
+                        if (prefetched.any { (_, v) -> v.contains("</tool_output>") || v.contains("</kb_context>") }) {
+                            error("pre-fetch result contained injection tag")
+                        }
+                        buildString {
+                            prefetched.forEachIndexed { index, (name, value) ->
+                                if (index > 0) appendLine()
+                                append("""<tool_output name="$name" format="json">""")
+                                appendLine(); append(value)
+                                appendLine(); append("</tool_output>")
+                            }
+                            if (notes.isNotEmpty()) {
+                                val notesJson = buildJsonArray {
+                                    notes.forEach { nr ->
+                                        add(buildJsonObject {
+                                            put("id", nr.id)
+                                            put("note", nr.note)
+                                            put("category", nr.category)
+                                            put("created_at", nr.createdAt)
+                                        })
+                                    }
+                                }.toString()
+                                if (!notesJson.contains("</tool_output>") && !notesJson.contains("</kb_context>")) {
+                                    appendLine()
+                                    append("""<tool_output name="getUserCoachNotes" format="json">""")
+                                    appendLine(); append(notesJson)
+                                    appendLine(); append("</tool_output>")
+                                }
+                            }
+                        }
+                    }
+                }.onFailure { e ->
+                    log.warn("[COACH] pre-fetch failed userId={}", user.userId, e)
+                }.getOrNull()
+
+                // RAG retrieval is non-fatal; an empty list degrades gracefully.
+                val retrievedChunks: List<RetrievedChunk> = hybridRetriever.retrieve(sanitized)
+
+                // Build kb_context envelope; reject injection tags + low-relevance noise.
+                // Scores below MIN_KB_SCORE are irrelevant matches (e.g. recipes returned for diary queries)
+                // that cause the model to pivot away from the tool result.
+                val safeChunks = retrievedChunks
+                    .filter { !it.text.contains("</kb_context>") }
+                    .filter { it.score >= MIN_KB_SCORE }
+                val kbContext: String? = if (safeChunks.isNotEmpty()) {
+                    val items = safeChunks.joinToString(",\n  ") { chunk ->
+                        val scoreStr = String.format(Locale.ROOT, "%.4f", chunk.score)
+                        """{"source":"${chunk.docId}","score":$scoreStr,"text":${sseJson.encodeToString(chunk.text)}}"""
+                    }
+                    "<kb_context format=\"json\">\n[$items]\n</kb_context>"
+                } else null
+
+                // Build citations JSON for persistence
+                val citationsJson: JsonArray? = if (safeChunks.isNotEmpty()) {
+                    buildJsonArray {
+                        safeChunks.forEach { chunk ->
+                            add(buildJsonObject {
+                                put("chunkId", chunk.chunkId)
+                                put("source", chunk.docId)
+                                put("score", chunk.score)
+                            })
+                        }
+                    }
+                } else null
+
+                // Buffer the full LLM response before sending it to the client.
+                val responseBuilder = StringBuilder()
+                var inputTokens = 0
+                var outputTokens = 0
+                var cachedTokens = 0
+                var finishReason: String? = null
+                var toolCallCount = 0
+
+                withTimeout(STREAM_TIMEOUT_MS) {
+                    agentFactory.streamChat(
+                        chatId         = chatId,
+                        locale         = body.locale,
+                        history        = history,
+                        userMessage    = sanitized,
+                        kbContext      = kbContext,
+                        userContext    = userContext,
+                        summaryContext = summaryContext,
+                        toolRunner     = toolRunner,
+                    ).collect { coachFrame ->
+                        when (coachFrame) {
+                            is CoachFrame.LLMFrame -> when (val frame = coachFrame.frame) {
+                                is StreamFrame.TextDelta -> responseBuilder.append(frame.text)
+                                is StreamFrame.End -> {
+                                    inputTokens  += frame.metaInfo.inputTokensCount ?: 0
+                                    outputTokens += frame.metaInfo.outputTokensCount ?: 0
+                                    finishReason  = frame.finishReason
+                                }
+                                else -> Unit
+                            }
+                            is CoachFrame.ToolStarted -> {
+                                toolCallCount++
+                                sendSseEvent(
+                                    "tool_start",
+                                    sseJson.encodeToString(
+                                        ToolStartPayload.serializer(),
+                                        ToolStartPayload(name = publicToolStatusName(coachFrame.name)),
+                                    )
+                                )
+                            }
+                            is CoachFrame.ToolFinished -> sendSseEvent(
+                                "tool_done",
+                                sseJson.encodeToString(
+                                    ToolDonePayload.serializer(),
+                                    ToolDonePayload(name = publicToolStatusName(coachFrame.name), ms = coachFrame.ms),
+                                )
+                            )
+                        }
+                    }
+                }
+
+                // Escalation to Pro. Always run Flash Lite first (above), then evaluate the
+                // four triggers and retry once on the Pro model (2k cap) if any fired. Running Flash
+                // first uniformly — even for the pre-LLM classifier signal — keeps a bad escalation
+                // model id from killing the turn: a failed Pro call gracefully falls back to Flash.
+                val firstPass = responseBuilder.toString()
+                val markerPresent = firstPass.contains(SystemPromptV1.NEEDS_ESCALATION_MARKER)
+                val truncated = finishReason?.let {
+                    it.equals("length", true) || it.equals("MAX_TOKENS", true) ||
+                        it.contains("length", true) || it.contains("max_token", true)
+                } ?: false
+                var escalated = false
+
+                if (classifierWantsEscalation || markerPresent || truncated || toolCallCount > 3) {
+                    val reason = when {
+                        classifierWantsEscalation -> "classifier_complex_reasoning"
+                        markerPresent -> "needs_escalation_marker"
+                        truncated -> "finish_reason_length"
+                        else -> "tool_calls_gt_3"
+                    }
+                    log.info(
+                        "[COACH-ESCALATE] retry_on_pro userId={} chatId={} reason={} toolCalls={} finishReason={}",
+                        user.userId, chatId, reason, toolCallCount, finishReason
+                    )
+                    val proBuilder = StringBuilder()
+                    var proInput = 0
+                    var proOutput = 0
+                    var proFinish: String? = null
+                    // The Pro pass gets the READ-ONLY tools (streamChat filters out
+                    // writeUserCoachNote on escalate) so complex data questions keep live data
+                    // access without risking a duplicated note write.
+                    runCatching {
+                        withTimeout(STREAM_TIMEOUT_MS) {
+                            agentFactory.streamChat(
+                                chatId         = chatId,
+                                locale         = body.locale,
+                                history        = history,
+                                userMessage    = sanitized,
+                                escalate       = true,
+                                kbContext      = kbContext,
+                                userContext    = userContext,
+                                summaryContext = summaryContext,
+                                toolRunner     = toolRunner,
+                            ).collect { coachFrame ->
+                                when (coachFrame) {
+                                    is CoachFrame.LLMFrame -> when (val frame = coachFrame.frame) {
+                                        is StreamFrame.TextDelta -> proBuilder.append(frame.text)
+                                        is StreamFrame.End -> {
+                                            proInput += frame.metaInfo.inputTokensCount ?: 0
+                                            proOutput += frame.metaInfo.outputTokensCount ?: 0
+                                            proFinish = frame.finishReason
+                                        }
+                                        else -> Unit
+                                    }
+                                    is CoachFrame.ToolStarted -> sendSseEvent(
+                                        "tool_start",
+                                        sseJson.encodeToString(
+                                            ToolStartPayload.serializer(),
+                                            ToolStartPayload(name = publicToolStatusName(coachFrame.name)),
+                                        )
+                                    )
+                                    is CoachFrame.ToolFinished -> sendSseEvent(
+                                        "tool_done",
+                                        sseJson.encodeToString(
+                                            ToolDonePayload.serializer(),
+                                            ToolDonePayload(name = publicToolStatusName(coachFrame.name), ms = coachFrame.ms),
+                                        )
+                                    )
+                                }
+                            }
+                        }
+                    }.onFailure { e ->
+                        // Loud — never silently keep Flash output while claiming escalated=true.
+                        log.error("[COACH-ESCALATE] pro_call_failed userId={} chatId={}", user.userId, chatId, e)
+                    }
+                    val proContent = proBuilder.toString()
+                        .replace(SystemPromptV1.NEEDS_ESCALATION_MARKER, "").trim()
+                    if (proContent.isNotBlank()) {
+                        responseBuilder.setLength(0)
+                        responseBuilder.append(proContent)
+                        inputTokens = proInput
+                        outputTokens = proOutput
+                        finishReason = proFinish
+                        escalated = true
+                    } else {
+                        log.warn(
+                            "[COACH-ESCALATE] pro_retry_empty userId={} chatId={}, keeping Flash output",
+                            user.userId, chatId
+                        )
+                    }
+                }
+
+                // Output sanitizer: check, retry once with strict mode, then fallback.
+                // Strip any residual <<NEEDS_ESCALATION>> marker uniformly (e.g. if the Pro retry
+                // failed and we fell back to the marked Flash output).
+                var assistantContent = responseBuilder.toString()
+                    .replace(SystemPromptV1.NEEDS_ESCALATION_MARKER, "").trim()
+                var safetyAction: String? = null
+
+                when (val checkResult = OutputSanitizer.check(assistantContent)) {
+                    is OutputSanitizer.Result.Pass -> Unit
+                    is OutputSanitizer.Result.Fail -> {
+                        log.warn(
+                            "[COACH-SAFETY] output_rejected userId={} reason={} chatId={}",
+                            user.userId, checkResult.reason, chatId
+                        )
+                        val retryBuilder = StringBuilder()
+                        var retryOutputTokens = 0
+                        runCatching {
+                            withTimeout(STREAM_TIMEOUT_MS) {
+                                agentFactory.streamChat(
+                                    chatId         = chatId,
+                                    locale         = body.locale,
+                                    history        = history,
+                                    userMessage    = sanitized,
+                                    strictMode     = true,
+                                    kbContext      = kbContext,
+                                    userContext    = userContext,
+                                    summaryContext = summaryContext,
+                                ).collect { coachFrame ->
+                                    when (coachFrame) {
+                                        is CoachFrame.LLMFrame -> when (val frame = coachFrame.frame) {
+                                            is StreamFrame.TextDelta -> retryBuilder.append(frame.text)
+                                            is StreamFrame.End -> retryOutputTokens = frame.metaInfo.outputTokensCount ?: 0
+                                            else -> Unit
+                                        }
+                                        else -> Unit
+                                    }
+                                }
+                            }
+                        }
+                        val retryContent = retryBuilder.toString()
+                        if (retryContent.isNotBlank() && OutputSanitizer.check(retryContent) is OutputSanitizer.Result.Pass) {
+                            assistantContent = retryContent
+                            outputTokens = retryOutputTokens
+                        } else {
+                            log.error(
+                                "[COACH-SAFETY] output_rejected_after_retry userId={} chatId={}, using fallback",
+                                user.userId, chatId
+                            )
+                            assistantContent = GENERIC_FALLBACK
+                            safetyAction = "output_filtered"
+                        }
+                    }
+                }
+
+                // Strip internal (KB: doc-id) grounding markers before display + persistence.
+                // Structured `citation` events (below) carry source attribution for the client.
+                assistantContent = stripKbCitations(assistantContent)
+
+                // Guard: Gemini thinking models can emit 0 TextDelta frames on empty tool results.
+                if (assistantContent.isBlank()) {
+                    log.warn("[COACH] blank_response userId={} chatId={}", user.userId, chatId)
+                    assistantContent = "I checked that for you but couldn't form a response. Please try again."
+                    safetyAction = "blank_response"
+                }
+
+                // Emit buffered tokens to client
+                sendSseEvent(
+                    "token",
+                    sseJson.encodeToString(TokenPayload.serializer(), TokenPayload(delta = assistantContent))
+                )
+
+                // Emit citation events before done.
+                safeChunks.forEach { chunk ->
+                    sendSseEvent(
+                        "citation",
+                        sseJson.encodeToString(
+                            CitationPayload.serializer(),
+                            CitationPayload(chunkId = chunk.chunkId, source = chunk.docId, score = chunk.score)
+                        )
+                    )
+                }
+
+                // On the first turn, generate a title via Flash Lite and emit before done.
+                if (isFirstTurn) {
+                    runCatching {
+                        withTimeout(3_000L) { agentFactory.generateTitle(content, body.locale) }
+                    }.getOrNull()?.let { generatedTitle ->
+                        runCatching { chatGateway.updateChatTitle(chatId, user.userId, generatedTitle) }
+                            .onFailure { e -> log.warn("[COACH] updateChatTitle failed chatId={}", chatId, e) }
+                        sendSseEvent(
+                            "title",
+                            sseJson.encodeToString(
+                                TitlePayload.serializer(),
+                                TitlePayload(chatId = chatId, title = generatedTitle)
+                            )
+                        )
+                    }
+                }
+
+                // Persist assistant message — non-fatal so `done` always reaches the client.
+                val msgId = runCatching {
+                    chatGateway.insertMessage(
+                        chatId = chatId,
+                        userId = user.userId,
+                        role = "assistant",
+                        content = assistantContent,
+                        requestId = requestId,
+                        inputTokens = inputTokens,
+                        outputTokens = outputTokens,
+                        cachedTokens = cachedTokens,
+                        modelUsed = if (escalated) CoachModels.ESCALATION else CoachModels.PRIMARY,
+                        finishReason = finishReason,
+                        safetyAction = safetyAction,
+                        citations = citationsJson,
+                        escalated = escalated,
+                    ).id
+                }.onFailure { e ->
+                    log.error("[COACH] assistant_persist_failed chatId={}", chatId, e)
+                }.getOrElse { java.util.UUID.randomUUID().toString() }
+
+                sendSseEvent(
+                    "done",
+                    sseJson.encodeToString(
+                        DonePayload.serializer(),
+                        DonePayload(
+                            chatId = chatId,
+                            messageId = msgId,
+                            tokens = TokenUsage(input = inputTokens, output = outputTokens, cached = cachedTokens),
+                            model = if (escalated) CoachModels.ESCALATION else CoachModels.PRIMARY,
+                            escalated = escalated,
+                        )
+                    )
+                )
+
+                // Release lock immediately after `done` so the next user message isn't blocked
+                // by the slow insertTrace call below (30–60s on dev cold starts).
+                // insertMessage runs before this point so history ordering is preserved.
+                inFlight.remove(flightKey)
+                lockReleased = true
+
+                // Reconcile the reservation with actual token usage (non-fatal).
+                // On escalation, inputTokens/outputTokens hold the Pro-pass actuals (the
+                // Flash pass is undercounted) — immaterial since the message cap binds first.
+                reservationId?.let { rid ->
+                    runCatching { budgetGateway.reconcile(rid, inputTokens, outputTokens) }
+                        .onSuccess { budgetSettled = true }
+                        .onFailure { e -> log.warn("[COACH-BUDGET] reconcile_failed reservationId={}", rid, e) }
+                }
+
+                // Persist RAG trace (non-fatal)
+                runCatching {
+                    chatGateway.insertTrace(
+                        messageId = msgId,
+                        userId = user.userId,
+                        ragQuery = sanitized,
+                        retrieved = citationsJson,
+                        promptVersion = CoachPromptVersion.CURRENT_INT,
+                    )
+                }.onFailure { e ->
+                    log.warn("[COACH] insertTrace failed messageId={}", msgId, e)
+                }
+            } catch (e: Exception) {
+                if (!lockReleased) {
+                    inFlight.remove(flightKey)
+                    lockReleased = true
+                }
+                if (e is ClosedWriteChannelException) {
+                    // Client closed the SSE connection — expected, not an error.
+                    log.debug("[COACH] SSE client disconnected userId={}", user.userId)
+                } else {
+                    log.error("[COACH] SSE stream failed userId={}", user.userId, e)
+                    runCatching {
+                        sendSseEvent(
+                            "error",
+                            sseJson.encodeToString(
+                                SseErrorPayload.serializer(),
+                                SseErrorPayload(code = "INTERNAL_ERROR", message = "Processing failed")
+                            )
+                        )
+                    }
+                }
+            } finally {
+                // Release the reservation if the turn never reconciled (stream cancel,
+                // error, or a reconcile failure). Idempotent: budget_release no-ops unless the
+                // reservation is still 'reserved', so this is safe after a successful reconcile.
+                val rid = reservationId
+                if (rid != null && !budgetSettled) {
+                    runCatching { budgetGateway.release(rid) }
+                        .onFailure { e -> log.warn("[COACH-BUDGET] release_failed reservationId={}", rid, e) }
+                }
+            }
+        }
+    } finally {
+        // Safety net: release lock on any exception path that bypassed the in-block release.
+        if (!lockReleased) inFlight.remove(flightKey)
+    }
+}

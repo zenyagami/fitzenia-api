@@ -1,0 +1,19 @@
+{
+  "id": "app/billing-premium",
+  "title": "Fitzenia subscription, billing, and premium features",
+  "section": "app",
+  "locale": "en",
+  "source_uri": "coach/corpus/app/billing-premium.json",
+  "chunks": [
+    "Fitzenia offers a free tier with core food tracking and a Premium subscription that unlocks the AI features: the AI Coach, AI Photo Scan, and AI Progress Projections. Premium is available as a monthly or annual subscription.",
+    "The AI Coach (this feature) is a Premium-only feature. It provides personalized, context-aware nutrition and fitness coaching powered by AI. The coach can access your diary data, weight history, and calorie targets to give advice tailored to your actual progress.",
+    "AI Photo Scan (analyzing a meal photo for automatic nutrition logging) is a Premium feature. Free users can use text search and barcode scanning to log foods, but the AI photo analysis requires a Premium subscription.",
+    "AI Progress Projections — the visual body composition projection tool — is a Premium feature. It requires a progress photo and your current body composition data, and uses AI to generate projected images at different stages of your fitness goal.",
+    "The annual Fitzenia Premium plan is the best value, offering approximately 30–40% savings compared to paying month-to-month. The annual subscription is charged once per year and auto-renews. You can cancel auto-renewal at any time from your device's subscription management settings.",
+    "Fitzenia Premium is managed through your device's payment platform: App Store (iOS) or Google Play (Android). Purchases and refunds are handled by Apple or Google, not by Fitzenia directly. To cancel your subscription, go to your device's subscription settings (not the Fitzenia app settings).",
+    "A Premium subscription on one platform (iOS or Android) does not automatically transfer to the other platform. If you switch devices, log in with the same account and restore your purchase using the 'Restore Purchase' option in Settings → Subscription. Your subscription status is linked to your Fitzenia account.",
+    "Family sharing: Fitzenia Premium purchased on iOS can be shared with family members via Apple Family Sharing if the subscriber enables family sharing in their Apple account settings. This allows up to 5 additional family members to use Premium features at no extra cost.",
+    "If the AI Coach is unavailable despite having an active Premium subscription, try: logging out and back in to refresh your entitlement status, checking your subscription status in your device's App Store or Play Store account, or contacting support if the issue persists after these steps.",
+    "Free trial: new users may be offered a free trial of Premium. The exact length and terms are shown on the paywall and come from the App Store or Google Play offer, so check there for the current trial — don't assume a fixed number of days. A trial automatically converts to a paid subscription at the end unless you cancel beforehand, and you can cancel any time from your device's subscription management settings to avoid being charged."
+  ]
+}

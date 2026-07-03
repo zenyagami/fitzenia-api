@@ -1,0 +1,16 @@
+{
+  "id": "nutrition/macros-overview",
+  "title": "Macronutrients explained: protein, carbs, and fat",
+  "section": "nutrition",
+  "locale": "en",
+  "source_uri": "coach/corpus/nutrition/macros-overview.json",
+  "chunks": [
+    "Macronutrients — protein, carbohydrates, and fat — are the three nutrients your body needs in large amounts and the only ones that provide calories (alongside alcohol). Protein and carbohydrates each provide about 4 kcal per gram, fat provides about 9 kcal per gram, and alcohol provides about 7 kcal per gram. Your total daily calories are simply the sum of the calories from these macros.",
+    "Protein builds and repairs muscle, skin, enzymes, and hormones. It is the most important macro to hit when you are losing fat because it preserves lean muscle and keeps you full. Higher-protein diets also have a larger thermic effect — your body burns more calories digesting protein than it does digesting carbs or fat.",
+    "Carbohydrates are your body's preferred energy source, especially for higher-intensity training. They are stored in muscles and the liver as glycogen, which fuels hard workouts. Carbs are not fattening on their own — excess total calories drive fat gain, regardless of which macro the surplus comes from.",
+    "Dietary fat is essential for hormone production, vitamin absorption, and cell health. You should never cut fat to zero. Keep fat at a minimum of roughly 0.5–0.8 g per kg of body weight per day to support healthy hormone function, even in an aggressive cut.",
+    "A common starting split for body composition is to set protein first (around 1.6–2.2 g/kg), set a fat floor (around 0.5–0.8 g/kg), and fill the remaining calories with carbohydrates. Fitzenia calculates this split for you based on your calorie target and goal, but understanding the logic helps you make smart swaps.",
+    "Calories ultimately determine whether you gain, lose, or maintain weight; macros determine the quality of that change — how much is muscle versus fat, and how good you feel and perform. Hitting your calorie target with poor macros (very low protein, very low fiber) works against your physique even when the calorie number is right.",
+    "You do not need to hit your macros perfectly every day. Aim to land within roughly 5–10 g of your protein target and within about 50–100 kcal of your calorie target. Consistency across the week matters far more than precision on any single day."
+  ]
+}
