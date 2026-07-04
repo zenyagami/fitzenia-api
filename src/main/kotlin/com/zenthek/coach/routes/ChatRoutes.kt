@@ -12,6 +12,7 @@ import com.zenthek.coach.agent.safety.HardBlockClassifier
 import com.zenthek.coach.agent.safety.InputSanitizer
 import com.zenthek.coach.agent.safety.OutputSanitizer
 import com.zenthek.coach.agent.tools.CoachToolRunner
+import com.zenthek.coach.auth.CoachPlan
 import com.zenthek.coach.auth.PremiumGate
 import com.zenthek.coach.compaction.ConversationCompactor
 import com.zenthek.coach.config.CoachModels
@@ -128,6 +129,7 @@ private fun publicToolStatusName(internalName: String): String = when (internalN
     "getTodayMacros"      -> "checking_today"
     "getRecentWeight",
     "getWeightTrend"      -> "analyzing_weight"
+    "getRecentSteps"      -> "checking_activity"
     "getCurrentPhase"     -> "reading_plan"
     "getDiaryForDate"     -> "reading_diary"
     "getUserCoachNotes"   -> "reading_notes"
@@ -144,6 +146,13 @@ data class SendMessageRequest(
     val content: String,
     val locale: String,
     val userTz: String? = null,
+    /**
+     * Model selection: `auto` (default — Lite with automatic Pro escalation),
+     * `fast` (Lite only, escalation triggers ignored; cheapest), or `pro`
+     * (straight to the Pro model — ~6× the credit burn; see docs/AI_COACH.md).
+     * Safety hard-blocks apply in every mode.
+     */
+    val mode: String? = null,
 )
 
 fun Application.configureCoachRouting(
@@ -227,8 +236,9 @@ private suspend fun processMessage(
     compactor: ConversationCompactor,
     budgetGateway: BudgetGateway,
 ) {
-    // Premium check happens before SSE so StatusPages can map ForbiddenException → 403
-    premiumGate.requirePremium(call)
+    // Premium check happens before SSE so StatusPages can map ForbiddenException → 403.
+    // The returned plan picks the credit cap (trial entitlements get the reduced one).
+    val plan = premiumGate.requirePremium(call)
 
     val user = call.requireAuthenticatedUser()
     val bearerToken = call.requireBearerAccessToken()
@@ -247,6 +257,12 @@ private suspend fun processMessage(
         )
         return
     }
+
+    // Model selector — validated before the SSE stream opens.
+    val mode = CoachMode.fromWire(body.mode) ?: CoachMode.AUTO.also {
+        log.warn("[COACH] no mode selected, default to Auto")
+    }
+    val proMode = mode == CoachMode.PRO
 
     val flightKey = "${user.userId}:${chatIdFromPath ?: "__new__"}"
     if (inFlight.putIfAbsent(flightKey, Unit) != null) {
@@ -347,6 +363,7 @@ private suspend fun processMessage(
                                     tokens = TokenUsage(input = 0, output = 0, cached = 0),
                                     model = "",
                                     escalated = false,
+                                    mode = mode.wire,
                                 )
                             )
                         )
@@ -358,22 +375,35 @@ private suspend fun processMessage(
                 // Atomic monthly budget: enforced before any LLM work. Hard-blocks
                 // above return early and are never charged. The reservation is keyed on the
                 // per-turn requestId, so a retried turn reuses its reservation (idempotent).
-                val (capMessages, capTokens) = CoachModels.budgetCapsFor(CoachModels.PRIMARY)
+                val (capMessages, capCredits) = CoachModels.budgetCapsFor(isTrial = plan == CoachPlan.TRIAL)
                 val nowUtc = LocalDate.now(ZoneOffset.UTC)
-                val periodYyyymm = nowUtc.year * 100 + nowUtc.monthValue
+                val periodYyyymm = BudgetPeriod.currentYyyymm(nowUtc)
                 val estimatedInputTokens =
                     ((sanitized.length + history.sumOf { it.content.length } + (summaryContext?.length ?: 0)) / 4) +
                         BUDGET_SYSTEM_PROMPT_TOKEN_ESTIMATE
+                // auto/fast reserve Lite-weighted (turns start on the Lite model; an automatic
+                // Pro escalation is corrected at reconcile — worst overshoot is one escalated
+                // turn past the cap). mode=pro is known upfront, so it reserves Pro-weighted.
+                val reservedOutputTokens =
+                    if (proMode) CoachModels.RESERVED_OUTPUT_TOKENS_PRO else CoachModels.RESERVED_OUTPUT_TOKENS
+                val estimatedCredits = if (proMode) {
+                    estimatedInputTokens.toLong() * CoachModels.WEIGHT_PRO_INPUT +
+                        reservedOutputTokens.toLong() * CoachModels.WEIGHT_PRO_OUTPUT
+                } else {
+                    estimatedInputTokens.toLong() * CoachModels.WEIGHT_LITE_INPUT +
+                        reservedOutputTokens.toLong() * CoachModels.WEIGHT_LITE_OUTPUT
+                }
                 // Fail-open: a transient budget RPC error must not block a paying premium user.
                 val reserveResult = runCatching {
                     budgetGateway.reserve(
-                        userId      = user.userId,
-                        requestId   = requestId,
-                        period      = periodYyyymm,
-                        inputMax    = estimatedInputTokens,
-                        outputMax   = CoachModels.RESERVED_OUTPUT_TOKENS,
-                        capMessages = capMessages,
-                        capTokens   = capTokens,
+                        userId           = user.userId,
+                        requestId        = requestId,
+                        period           = periodYyyymm,
+                        inputMax         = estimatedInputTokens,
+                        outputMax        = reservedOutputTokens,
+                        estimatedCredits = estimatedCredits,
+                        capMessages      = capMessages,
+                        capCredits       = capCredits,
                     )
                 }.onFailure { e ->
                     log.warn("[COACH-BUDGET] reserve_failed userId={} chatId={}, proceeding uncharged", user.userId, chatId, e)
@@ -381,9 +411,7 @@ private suspend fun processMessage(
 
                 if (reserveResult != null && !reserveResult.allowed) {
                     val nextMonth = nowUtc.withDayOfMonth(1).plusMonths(1)
-                    val resetAtIso = DateTimeFormatter.ISO_INSTANT.format(
-                        nextMonth.atStartOfDay(ZoneOffset.UTC).toInstant()
-                    )
+                    val resetAtIso = BudgetPeriod.nextResetIso(nowUtc)
                     val resetLabel = "${nextMonth.month.getDisplayName(TextStyle.FULL, Locale.ENGLISH)} 1"
                     log.info(
                         "[COACH-BUDGET] budget_exceeded userId={} chatId={} reason={}",
@@ -396,7 +424,12 @@ private suspend fun processMessage(
                             BudgetExceededPayload(
                                 code = "BUDGET_EXCEEDED",
                                 resetAt = resetAtIso,
-                                message = "You've reached this month's coach limit. Resets $resetLabel.",
+                                message = if (plan == CoachPlan.TRIAL) {
+                                    "You've reached your trial coach limit. Subscribe to unlock the full monthly allowance."
+                                } else {
+                                    "You've reached this month's coach limit. Resets $resetLabel."
+                                },
+                                plan = plan.wire,
                             )
                         )
                     )
@@ -505,23 +538,34 @@ private suspend fun processMessage(
                 } else null
 
                 // Buffer the full LLM response before sending it to the client.
+                // inputTokens/outputTokens accumulate the TOTAL across all passes (Lite first
+                // pass + Pro escalation retry + strict-mode retry); proInputTokens/proOutputTokens
+                // hold the Pro-pass share so cost-weighted budgeting can price each segment.
                 val responseBuilder = StringBuilder()
                 var inputTokens = 0
                 var outputTokens = 0
                 var cachedTokens = 0
+                var proInputTokens = 0
+                var proOutputTokens = 0
                 var finishReason: String? = null
                 var toolCallCount = 0
 
+                // mode=pro skips the Lite pass entirely: one Pro pass (read-only tools,
+                // same as the escalation retry) whose tokens land in the pro segment.
+                // mode=fast never runs the Pro retry, so the self-escalation marker is
+                // disabled — Lite must answer as best it can instead of handing off.
                 withTimeout(STREAM_TIMEOUT_MS) {
                     agentFactory.streamChat(
-                        chatId         = chatId,
-                        locale         = body.locale,
-                        history        = history,
-                        userMessage    = sanitized,
-                        kbContext      = kbContext,
-                        userContext    = userContext,
-                        summaryContext = summaryContext,
-                        toolRunner     = toolRunner,
+                        chatId                = chatId,
+                        locale                = body.locale,
+                        history               = history,
+                        userMessage           = sanitized,
+                        escalate              = proMode,
+                        kbContext             = kbContext,
+                        userContext           = userContext,
+                        summaryContext        = summaryContext,
+                        toolRunner            = toolRunner,
+                        allowEscalationMarker = mode != CoachMode.FAST,
                     ).collect { coachFrame ->
                         when (coachFrame) {
                             is CoachFrame.LLMFrame -> when (val frame = coachFrame.frame) {
@@ -529,6 +573,10 @@ private suspend fun processMessage(
                                 is StreamFrame.End -> {
                                     inputTokens  += frame.metaInfo.inputTokensCount ?: 0
                                     outputTokens += frame.metaInfo.outputTokensCount ?: 0
+                                    if (proMode) {
+                                        proInputTokens  += frame.metaInfo.inputTokensCount ?: 0
+                                        proOutputTokens += frame.metaInfo.outputTokensCount ?: 0
+                                    }
                                     finishReason  = frame.finishReason
                                 }
                                 else -> Unit
@@ -564,9 +612,18 @@ private suspend fun processMessage(
                     it.equals("length", true) || it.equals("MAX_TOKENS", true) ||
                         it.contains("length", true) || it.contains("max_token", true)
                 } ?: false
-                var escalated = false
+                var escalated = proMode
 
-                if (classifierWantsEscalation || markerPresent || truncated || toolCallCount > 3) {
+                val escalationTriggered =
+                    classifierWantsEscalation || markerPresent || truncated || toolCallCount > 3
+                if (escalationTriggered && mode != CoachMode.AUTO) {
+                    // pro already ran on the Pro model; fast explicitly opts out of the retry.
+                    log.info(
+                        "[COACH-ESCALATE] retry_suppressed mode={} userId={} chatId={}",
+                        mode.wire, user.userId, chatId
+                    )
+                }
+                if (escalationTriggered && mode == CoachMode.AUTO) {
                     val reason = when {
                         classifierWantsEscalation -> "classifier_complex_reasoning"
                         markerPresent -> "needs_escalation_marker"
@@ -630,11 +687,15 @@ private suspend fun processMessage(
                     }
                     val proContent = proBuilder.toString()
                         .replace(SystemPromptV1.NEEDS_ESCALATION_MARKER, "").trim()
+                    // The Pro pass is paid for even when it comes back empty and we keep the
+                    // Flash output — charge it on top of the Lite pass, never instead of it.
+                    proInputTokens += proInput
+                    proOutputTokens += proOutput
+                    inputTokens += proInput
+                    outputTokens += proOutput
                     if (proContent.isNotBlank()) {
                         responseBuilder.setLength(0)
                         responseBuilder.append(proContent)
-                        inputTokens = proInput
-                        outputTokens = proOutput
                         finishReason = proFinish
                         escalated = true
                     } else {
@@ -660,6 +721,7 @@ private suspend fun processMessage(
                             user.userId, checkResult.reason, chatId
                         )
                         val retryBuilder = StringBuilder()
+                        var retryInputTokens = 0
                         var retryOutputTokens = 0
                         runCatching {
                             withTimeout(STREAM_TIMEOUT_MS) {
@@ -676,7 +738,10 @@ private suspend fun processMessage(
                                     when (coachFrame) {
                                         is CoachFrame.LLMFrame -> when (val frame = coachFrame.frame) {
                                             is StreamFrame.TextDelta -> retryBuilder.append(frame.text)
-                                            is StreamFrame.End -> retryOutputTokens = frame.metaInfo.outputTokensCount ?: 0
+                                            is StreamFrame.End -> {
+                                                retryInputTokens += frame.metaInfo.inputTokensCount ?: 0
+                                                retryOutputTokens += frame.metaInfo.outputTokensCount ?: 0
+                                            }
                                             else -> Unit
                                         }
                                         else -> Unit
@@ -685,9 +750,12 @@ private suspend fun processMessage(
                             }
                         }
                         val retryContent = retryBuilder.toString()
+                        // The strict retry runs on the Lite model and is paid for whether or
+                        // not its output is used — accumulate, don't replace.
+                        inputTokens += retryInputTokens
+                        outputTokens += retryOutputTokens
                         if (retryContent.isNotBlank() && OutputSanitizer.check(retryContent) is OutputSanitizer.Result.Pass) {
                             assistantContent = retryContent
-                            outputTokens = retryOutputTokens
                         } else {
                             log.error(
                                 "[COACH-SAFETY] output_rejected_after_retry userId={} chatId={}, using fallback",
@@ -758,6 +826,8 @@ private suspend fun processMessage(
                         inputTokens = inputTokens,
                         outputTokens = outputTokens,
                         cachedTokens = cachedTokens,
+                        proInputTokens = proInputTokens.takeIf { it > 0 },
+                        proOutputTokens = proOutputTokens.takeIf { it > 0 },
                         modelUsed = if (escalated) CoachModels.ESCALATION else CoachModels.PRIMARY,
                         finishReason = finishReason,
                         safetyAction = safetyAction,
@@ -778,6 +848,7 @@ private suspend fun processMessage(
                             tokens = TokenUsage(input = inputTokens, output = outputTokens, cached = cachedTokens),
                             model = if (escalated) CoachModels.ESCALATION else CoachModels.PRIMARY,
                             escalated = escalated,
+                            mode = mode.wire,
                         )
                     )
                 )
@@ -788,11 +859,22 @@ private suspend fun processMessage(
                 inFlight.remove(flightKey)
                 lockReleased = true
 
-                // Reconcile the reservation with actual token usage (non-fatal).
-                // On escalation, inputTokens/outputTokens hold the Pro-pass actuals (the
-                // Flash pass is undercounted) — immaterial since the message cap binds first.
+                // Reconcile the reservation with actual per-segment token usage (non-fatal).
+                // inputTokens/outputTokens are totals across all passes (Lite + Pro + retry);
+                // the Pro share carries a 6× credit weight, so it's split out for the RPC.
                 reservationId?.let { rid ->
-                    runCatching { budgetGateway.reconcile(rid, inputTokens, outputTokens) }
+                    runCatching {
+                        budgetGateway.reconcile(
+                            reservationId = rid,
+                            liteInput     = (inputTokens - proInputTokens).coerceAtLeast(0),
+                            liteOutput    = (outputTokens - proOutputTokens).coerceAtLeast(0),
+                            proInput      = proInputTokens,
+                            proOutput     = proOutputTokens,
+                            // koog 1.0.0 ResponseMetaInfo has no cached-token field; the SQL
+                            // quarter-weight is ready whenever the stream exposes one.
+                            cachedInput   = 0,
+                        )
+                    }
                         .onSuccess { budgetSettled = true }
                         .onFailure { e -> log.warn("[COACH-BUDGET] reconcile_failed reservationId={}", rid, e) }
                 }

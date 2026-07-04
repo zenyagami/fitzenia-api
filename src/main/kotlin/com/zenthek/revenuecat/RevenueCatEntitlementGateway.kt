@@ -120,6 +120,37 @@ class RevenueCatEntitlementGateway(
         rpcVoid("coach_reconcile_user_entitlements", body, "reconcile userId=$userId")
     }
 
+    /**
+     * Grant credit top-up packs from RC consumable purchases. Idempotent on each grant's
+     * `rc_transaction_id` (ON CONFLICT DO NOTHING). Returns the number of NEW packs inserted.
+     */
+    suspend fun grantTopUps(
+        userId: String,
+        environment: String,
+        grants: List<TopUpGrantItem>,
+    ): Int {
+        val grantsJson = json.encodeToJsonElement(
+            kotlinx.serialization.builtins.ListSerializer(TopUpGrantItem.serializer()),
+            grants,
+        )
+        val body = buildJsonObject {
+            put("p_user_id", userId)
+            put("p_environment", environment)
+            put("p_grants", grantsJson)
+        }
+        val response = httpClient.post("$supabaseUrl/rest/v1/rpc/coach_grant_credit_topups") {
+            serviceRoleHeaders()
+            contentType(ContentType.Application.Json)
+            setBody(json.encodeToString(JsonElement.serializer(), body))
+        }
+        val bodyText: String = response.body()
+        if (!response.status.isSuccess()) {
+            log.error("[COACH-RC] grantTopUps failed userId={} status={} body={}", userId, response.status, bodyText)
+            error("coach_grant_credit_topups failed: ${response.status}")
+        }
+        return bodyText.trim().toIntOrNull() ?: 0
+    }
+
     /** Sweeper recall: atomically re-claim stuck/failed events for replay. */
     suspend fun claimRecoverable(
         staleAfter: String = "5 minutes",

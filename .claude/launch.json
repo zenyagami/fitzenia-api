@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "coach",
+      "runtimeExecutable": "./gradlew",
+      "runtimeArgs": ["runCoach"],
+      "port": 8081
+    }
+  ]
+}

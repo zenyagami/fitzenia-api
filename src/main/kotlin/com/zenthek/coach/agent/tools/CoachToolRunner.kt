@@ -49,6 +49,7 @@ class CoachToolRunner(
             "getCurrentTargets"  -> getCurrentTargets()
             "getTodayMacros"     -> getTodayMacros()
             "getRecentWeight"    -> getRecentWeight(days = args["days"]?.jsonPrimitive?.content?.toIntOrNull() ?: 14)
+            "getRecentSteps"     -> getRecentSteps(days = args["days"]?.jsonPrimitive?.content?.toIntOrNull() ?: 14)
             "getCurrentPhase"    -> getCurrentPhase()
             "getUserCoachNotes"   -> getUserCoachNotes()
             "writeUserCoachNote" -> writeUserCoachNote(
@@ -137,6 +138,36 @@ class CoachToolRunner(
                 "&is_deleted=eq.false&date=gte.$start&date=lte.$end&order=date.desc",
         )
         return if (raw.trim() == "[]") """{"entries":[],"count":0,"period_days":$days}""" else raw
+    }
+
+    private suspend fun getRecentSteps(days: Int): String {
+        val start = userLocalDate.minusDays(days.toLong()).format(ISO_DATE)
+        val end   = userLocalDate.format(ISO_DATE)
+        val entries = postgrestGetArray(
+            "daily_activity",
+            "select=date,steps_count&is_deleted=eq.false&date=gte.$start&date=lte.$end&order=date.desc",
+        )
+        // No unique (user_id, date) constraint on daily_activity — collapse to one figure per date.
+        val byDate = entries
+            .mapNotNull { row ->
+                val date = row["date"]?.jsonPrimitive?.content ?: return@mapNotNull null
+                val steps = row["steps_count"]?.jsonPrimitive?.content?.toIntOrNull() ?: return@mapNotNull null
+                date to steps
+            }
+            .groupBy({ it.first }, { it.second })
+            .mapValues { (_, v) -> v.max() }
+            .toSortedMap(compareByDescending { it })
+
+        if (byDate.isEmpty()) return """{"entries":[],"count":0,"period_days":$days}"""
+        return json.encodeToString(JsonObject.serializer(), buildJsonObject {
+            put("period_days", days)
+            put("count", byDate.size)
+            putJsonArray("entries") {
+                byDate.forEach { (date, steps) ->
+                    addJsonObject { put("date", date); put("steps", steps) }
+                }
+            }
+        })
     }
 
     private suspend fun getCurrentPhase(): String {
