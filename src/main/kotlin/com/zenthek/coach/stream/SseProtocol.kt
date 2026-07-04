@@ -20,14 +20,26 @@ data class DonePayload(
     val tokens: TokenUsage,
     val model: String,
     val escalated: Boolean,
+    /** Model selector the turn ran with: auto | fast | pro. */
+    val mode: String = "auto",
 )
 
 @Serializable
 data class SseErrorPayload(val code: String, val message: String)
 
-/** Emitted as an `error` SSE event when the monthly budget reservation is denied. */
+/**
+ * Emitted as an `error` SSE event when the monthly budget reservation is denied.
+ * [plan] lets the client pick the right CTA: `trial` → "subscribe to unlock the full
+ * allowance" (upgrading lifts the cap immediately); `premium` → wait for [resetAt]
+ * (or buy a credit top-up once packs are purchasable in the app).
+ */
 @Serializable
-data class BudgetExceededPayload(val code: String, val resetAt: String, val message: String)
+data class BudgetExceededPayload(
+    val code: String,
+    val resetAt: String,
+    val message: String,
+    val plan: String = "premium",
+)
 
 @Serializable
 data class SafetyPayload(val action: String, val message: String)

@@ -35,6 +35,17 @@ object CoachToolDescriptors {
             ),
         ),
         ToolDescriptor(
+            name = "getRecentSteps",
+            description = "Returns daily step count log entries over the last N days ordered newest-first. Steps sync automatically from the user's phone; a missing date means no count was logged that day, not an error. Use for step-count and daily-activity questions (e.g. \"how many steps yesterday\", \"was I active this week\").",
+            optionalParameters = listOf(
+                ToolParameterDescriptor(
+                    name = "days",
+                    description = "Number of days to look back (default 14)",
+                    type = ToolParameterType.Integer,
+                ),
+            ),
+        ),
+        ToolDescriptor(
             name = "getCurrentPhase",
             description = "Returns the user's active diet/training phase: target phase, goal direction, pace tier, start date, goal date, days into phase, plus start/target weight and start/target body-fat percent. Use for phase-progress and time-to-goal questions.",
         ),

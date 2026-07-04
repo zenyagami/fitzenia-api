@@ -40,6 +40,17 @@ data class RevenueCatSubscriberResponse(
 data class RevenueCatSubscriber(
     val entitlements: Map<String, RevenueCatEntitlement> = emptyMap(),
     val subscriptions: Map<String, RevenueCatSubscription> = emptyMap(),
+    // Consumables (credit top-ups): product_id → every purchase of it, each with a unique id.
+    @SerialName("non_subscriptions") val nonSubscriptions: Map<String, List<RevenueCatNonSubscription>> = emptyMap(),
+)
+
+@Serializable
+data class RevenueCatNonSubscription(
+    /** RevenueCat's unique transaction id — the idempotency key for credit grants. */
+    val id: String? = null,
+    @SerialName("purchase_date") val purchaseDate: String? = null,
+    val store: String? = null,
+    @SerialName("is_sandbox") val isSandbox: Boolean = false,
 )
 
 @Serializable
@@ -54,6 +65,9 @@ data class RevenueCatEntitlement(
 data class RevenueCatSubscription(
     val store: String? = null,
     @SerialName("expires_date") val expiresDate: String? = null,
+    // "trial" while inside the free-trial window, "normal"/"intro" otherwise (v1 subscriber
+    // API uses lowercase — webhook events use uppercase, but we never trust the event body).
+    @SerialName("period_type") val periodType: String? = null,
 )
 
 // ── Outbound to coach_reconcile_user_entitlements (matches its jsonb shape) ──
@@ -71,6 +85,21 @@ data class EntitlementReconcileItem(
     @SerialName("grace_period_ends_at") val gracePeriodEndsAt: String? = null,
     @SerialName("product_id") val productId: String? = null,
     val store: String? = null,
+    @SerialName("is_trial") val isTrial: Boolean = false,
+)
+
+/**
+ * One element of the `p_grants` JSON array passed to `public.coach_grant_credit_topups`.
+ * Field names mirror the RECORDSET the SQL function unpacks — do not rename without
+ * changing the function. Idempotent on [rcTransactionId] (UNIQUE, ON CONFLICT DO NOTHING).
+ */
+@Serializable
+data class TopUpGrantItem(
+    @SerialName("rc_transaction_id") val rcTransactionId: String,
+    @SerialName("product_id") val productId: String,
+    val store: String? = null,
+    val credits: Long,
+    @SerialName("purchased_at") val purchasedAt: String? = null,
 )
 
 /** One row returned by `public.coach_rc_claim_recoverable_events` (sweeper recall). */

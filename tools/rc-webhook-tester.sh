@@ -58,10 +58,22 @@ JSON
 )"
 }
 
+# Credit top-up consumable (coach_credits_5m → 5M credits). Like every other event, this only
+# triggers a snapshot sync — credits are granted ONLY if the RC sandbox subscriber actually has
+# the non_subscription purchase. For a pure draw-path test without a sandbox purchase, insert a
+# coach_credit_topup row in dev SQL instead (see docs/AI_COACH.md manual test).
+topup() {
+  post "NON_RENEWING_PURCHASE" "$(cat <<JSON
+{"api_version":"1.0","event":{"id":"evt_topup_${STAMP}","type":"NON_RENEWING_PURCHASE","app_user_id":"${APP_USER_ID}","aliases":["${APP_USER_ID}"],"environment":"${ENV}","product_id":"coach_credits_5m"}}
+JSON
+)"
+}
+
 case "$WHICH" in
   initial)    initial ;;
   expiration) expiration ;;
   test)       test_event ;;
+  topup)      topup ;;
   all)        initial; expiration; test_event ;;
-  *) echo "unknown selector '$WHICH' (initial|expiration|test|all)"; exit 1 ;;
+  *) echo "unknown selector '$WHICH' (initial|expiration|test|topup|all)"; exit 1 ;;
 esac

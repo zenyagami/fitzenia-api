@@ -32,6 +32,8 @@ This is the **complete wire contract** for the AI Coach chat feature: every endp
 | DELETE | `/api/coach/chats/{chatId}` | Bearer | 30 / min (`coach-management`) | Archive the chat + delete its messages. `204` / `404`. |
 | GET | `/api/coach/notes` | Bearer | 30 / min (`coach-management`) | List the user's cross-chat coach notes (max 50). |
 | DELETE | `/api/coach/notes/{id}` | Bearer | 30 / min (`coach-management`) | Delete one coach note. `204` / `404`. |
+| GET | `/api/coach/usage` | Bearer | 30 / min (`coach-management`) | Monthly credit-usage snapshot for the usage bars. See [Usage endpoint](#usage-endpoint). |
+| POST | `/api/coach/purchases/sync` | Bearer | 30 / min (`coach-management`) | Force-sync RevenueCat purchases (restore purchases). **Call after every purchase + on coach open.** See [Purchase sync](#purchase-sync). |
 | GET | `/health` | public | — | Liveness probe → `200 {"status":"ok"}`. |
 
 A `429` on any endpoint means the per-user rate bucket is exhausted — show a "try again in a minute" toast. The two streaming endpoints share the `coach-message` bucket (6/min); everything else shares `coach-management` (30/min).
@@ -70,12 +72,14 @@ data class SendMessageRequest(
     val content: String,        // required, non-blank, ≤ ~80 000 chars
     val locale: String,         // required, e.g. "en", "es", "de" (region subtags are stripped server-side)
     val userTz: String? = null, // optional IANA tz, e.g. "Europe/Madrid"; defaults to "UTC"
+    val mode: String? = null,   // optional: "auto" (default) | "fast" | "pro"
 )
 ```
 
 - `content` — the user's message. Blank → `400`. Over ~80 000 chars → `400 INPUT_TOO_LONG`.
 - `locale` — drives the **reply language** and the language of any safety redirect. Send the user's app language (e.g. `"es"`).
 - `userTz` — used so date-aware tools ("how many calories left **today**") resolve to the user's local day. Falls back to UTC if omitted/invalid.
+- `mode` — model selector. `auto` (or omitted) = current behavior: the Lite model answers and may automatically retry once on the Pro model. `fast` = Lite only, the automatic Pro retry is disabled (cheapest — most credit-efficient); the model always answers as best it can, but complex questions may get shallower or truncated answers than `auto` would produce. `pro` = the turn runs directly on the Pro model (**~6× the credit burn** of a Lite turn; the Pro pass has read-only tools, same as an automatic escalation). Safety hard-blocks apply in every mode. Any other value → `400 INVALID_MODE`. The `done` event echoes the mode the turn ran with.
 
 ### Response: Server-Sent Events
 
@@ -135,6 +139,7 @@ The coach is reading the user's live data (targets, today's macros, weight histo
 | `checking_targets` | Reading current calorie/macro targets | "Checking your targets…" |
 | `checking_today` | Reading today's logged food | "Checking today's food…" |
 | `analyzing_weight` | Reading weight history / trend | "Analyzing your weight…" |
+| `checking_activity` | Reading step count history | "Checking your steps…" |
 | `reading_plan` | Reading the active phase/plan | "Reviewing your plan…" |
 | `reading_diary` | Reading diary entries for a date | "Analyzing your diary…" |
 | `reading_notes` | Reading saved coach notes | "Reviewing your notes…" |
@@ -182,10 +187,11 @@ data class DonePayload(
     val messageId: String,   // id of the persisted assistant coach_message row
     val tokens: TokenUsage,
     val model: String,       // e.g. "gemini-3.1-flash-lite" (or the escalation model)
-    val escalated: Boolean,  // true if the turn was retried on the Pro model
+    val escalated: Boolean,  // true if the turn ran on the Pro model (auto retry or mode=pro)
+    val mode: String = "auto", // the model selector the turn ran with: auto | fast | pro
 )
 ```
-Marks a successful turn. Tear down the SSE connection. `model`/`escalated` are informational — **display `model` as-is; do not hardcode model strings.** On a **hard-block** turn, `done` arrives with `model=""`, `tokens={0,0,0}`, `escalated=false` (the real content was in the preceding `safety` event).
+Marks a successful turn. Tear down the SSE connection. `model`/`escalated`/`mode` are informational — **display `model` as-is; do not hardcode model strings.** `tokens` are **totals across all model passes** of the turn (an escalated turn includes both the Lite pass and the Pro retry). On a **hard-block** turn, `done` arrives with `model=""`, `tokens={0,0,0}`, `escalated=false` (the real content was in the preceding `safety` event).
 
 #### `error` — terminal (two possible shapes — branch on `code`)
 `event: error` is used for **two different payloads**. Disambiguate by `code` (or the presence of `resetAt`):
@@ -193,8 +199,16 @@ Marks a successful turn. Tear down the SSE connection. `model`/`escalated` are i
 ```kotlin
 // Monthly budget cap hit (no `done` follows). Has resetAt.
 @Serializable
-data class BudgetExceededPayload(val code: String, val resetAt: String, val message: String)
-//   code == "BUDGET_EXCEEDED", resetAt = ISO-8601 instant (start of next month, UTC)
+data class BudgetExceededPayload(
+    val code: String,            // == "BUDGET_EXCEEDED"
+    val resetAt: String,         // ISO-8601 instant (start of next month, UTC)
+    val message: String,         // plan-aware copy, safe to show as-is
+    val plan: String = "premium" // "premium" | "trial" — pick the CTA
+)
+// plan == "trial": the cap is the reduced trial allowance — show an UPGRADE CTA
+//   (subscribing lifts the cap immediately; waiting for resetAt only refills the trial-sized pot).
+// plan == "premium": show the resetAt countdown (and, once purchasable in-app, a
+//   "buy more credits" CTA — purchased credits are consumed automatically).
 
 // Generic in-stream failure (no `done` follows).
 @Serializable
@@ -318,6 +332,73 @@ Response: `200` with `List<CoachUserNoteRow>` (up to 50, newest-first). The coac
 
 ---
 
+## Usage endpoint
+
+### GET `/api/coach/usage`
+
+Monthly credit-usage snapshot for rendering Claude-style usage bars. The coach budget is
+**cost-weighted credits** (a Pro-model turn burns ~6× a Lite turn); the message count is
+informational only. Full model + sizing: `docs/AI_COACH.md`.
+
+```kotlin
+@Serializable data class UsageBucket(val used: Long, val limit: Long, val percent: Int)
+@Serializable data class ProUsage(val usedCredits: Long, val percentOfLimit: Int)
+@Serializable data class TopUpUsage(val granted: Long, val remaining: Long) // purchased packs (non-expired); used = granted - remaining
+@Serializable
+data class CoachUsageResponse(
+    val period: Int,        // YYYYMM, e.g. 202607
+    val resetAt: String,    // ISO-8601 instant — start of next month (UTC); same value BUDGET_EXCEEDED carries
+    val plan: String,       // "premium" | "trial" (trial entitlements get a reduced credit limit)
+    val total: UsageBucket, // the monthly pot — drive the main "All models" bar with total.percent
+    val pro: ProUsage,      // share attributable to the Pro model (display-only; no separate Pro cap)
+    val topUp: TopUpUsage,  // purchased credit packs — consumed automatically after the monthly pot
+    val messagesUsed: Int,
+)
+```
+
+Example:
+```json
+{ "period": 202607, "resetAt": "2026-08-01T00:00:00Z", "plan": "premium",
+  "total": {"used": 412300, "limit": 2200000, "percent": 18},
+  "pro": {"usedCredits": 95200, "percentOfLimit": 4},
+  "topUp": {"granted": 5000000, "remaining": 4300000}, "messagesUsed": 31 }
+```
+
+UI suggestions: one bar for `total.percent` ("All models"), a second thinner bar for
+`pro.percentOfLimit` ("Pro"); show `resetAt` as "resets Aug 1". Percentages are integers
+clamped to 0–100. Refresh after each `done` event and on screen open — don't poll.
+When `total.percent` reaches 100 the next turn returns the `BUDGET_EXCEEDED` SSE error
+(unless top-up credits remain — those are consumed automatically after the monthly pot).
+
+---
+
+## Purchase sync
+
+### POST `/api/coach/purchases/sync`
+
+Force-syncs the caller's RevenueCat subscriber, then returns the **same `CoachUsageResponse`** as
+`GET /api/coach/usage`. It reconciles the user's entitlement **and grants any credit top-up the
+webhook missed** (idempotent — safe to call repeatedly; it never double-grants). No request body.
+
+**When to call it (important):**
+1. **Immediately after any purchase completes** (subscription *or* credit top-up) — belt-and-suspenders
+   with the server webhook. This is the reliable delivery path: webhooks are best-effort and can be
+   dropped, but this call is synchronous and authoritative.
+2. **On coach-screen open / app foreground** — cheap self-heal so a user who somehow missed a grant
+   picks it up next time they look at the coach.
+3. As a **"Restore purchases"** button action.
+
+Why it matters: a user who is already premium never triggers the server's lazy background reconcile
+(that only runs when a non-entitled user first hits the coach), so **without this call a dropped
+webhook leaves a paying user without their credits and no automatic recovery.** After a top-up
+purchase, call this, then re-render the usage bars from the returned `topUp` fields.
+
+Responses: `200` with `CoachUsageResponse` on success · `403 PREMIUM_REQUIRED` if the synced user is
+not entitled · `502 SYNC_FAILED` if RevenueCat was unreachable (retry with backoff) · `503
+SYNC_UNAVAILABLE` if the server has no RevenueCat REST key configured.
+
+---
+
 ## Error model
 
 There are **two layers**. Handle both.
@@ -329,6 +410,7 @@ These come back as a normal JSON body, **not** as SSE. Body shape is always `{"e
 |---|---|---|
 | `400` | Blank `content` | `{"error":"content must not be blank"}` |
 | `400` | `content` too long | `{"error":"INPUT_TOO_LONG","message":"Message exceeds the maximum input length"}` |
+| `400` | Bad `mode` value | `{"error":"INVALID_MODE","message":"mode must be one of: auto, fast, pro"}` |
 | `400` | Malformed JSON body | `{"error":"Invalid request body"}` |
 | `401` | Missing/invalid/expired JWT | `{"error":"Unauthorized"}` |
 | `403` | Authenticated but **not premium** | `{"error":"PREMIUM_REQUIRED"}` |

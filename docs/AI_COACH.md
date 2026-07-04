@@ -17,8 +17,8 @@ A premium, chat-style AI fitness coach ("Fitzy"), running as a **separate Cloud 
 food API — same Kotlin/Ktor codebase, different Jib image + module. It answers nutrition/training
 questions grounded in a curated knowledge base **and** the user's own logged data (weight, targets,
 today's macros, diary), streams answers over SSE, remembers cross-chat preferences, enforces a monthly
-token budget, and hard-blocks unsafe topics (eating-disorder / self-harm / medical / drugs) before the
-LLM. Premium is enforced server-side via `user_entitlement` (RevenueCat-driven).
+**cost-weighted credit budget**, and hard-blocks unsafe topics (eating-disorder / self-harm / medical /
+drugs) before the LLM. Premium is enforced server-side via `user_entitlement` (RevenueCat-driven).
 
 Boots via `coach.conf` → `com.zenthek.coach.CoachApplicationKt.module` (not the food-API module).
 
@@ -52,10 +52,12 @@ Full request/response + SSE shapes are in [`AI_COACH_CLIENT.md`](AI_COACH_CLIENT
 
 | Method | Path | Bucket (per user) |
 |---|---|---|
-| POST | `/api/coach/messages` (new chat) · `/api/coach/chats/{id}/messages` (existing) | `coach-message` — 6/min |
+| POST | `/api/coach/messages` (new chat) · `/api/coach/chats/{id}/messages` (existing) — body takes optional `mode` (auto/fast/pro) | `coach-message` — 6/min |
 | GET | `/api/coach/chats` · `/api/coach/chats/{id}/messages` | `coach-management` — 30/min |
 | DELETE | `/api/coach/chats/{id}` · `/api/coach/notes/{id}` | `coach-management` — 30/min |
 | GET | `/api/coach/notes` | `coach-management` — 30/min |
+| GET | `/api/coach/usage` — monthly credit-usage snapshot (usage bars) | `coach-management` — 30/min |
+| POST | `/api/coach/purchases/sync` — force-sync RevenueCat subscriber (restore purchases; grants missed top-ups), returns fresh usage | `coach-management` — 30/min |
 | GET | `/health` | public |
 
 `PremiumGate.requirePremium` gates every `/api/coach/**` route → `403 PREMIUM_REQUIRED` for
@@ -71,8 +73,9 @@ non-entitled users. Single-flight per `(userId, chatId)` → `409 IN_FLIGHT`.
 2. **Safety hard-block** (`HardBlockClassifier`, regex/heuristic) — ED / self-harm / medical / drug →
    emit a `safety` SSE event with the locale-aware canned helpline text, persist `safety_action`,
    **skip the LLM, not budget-charged**, then `done`.
-3. **Budget reserve** (`coach_budget_reserve`, keyed on the per-turn `requestId`) — `BUDGET_EXCEEDED`
-   `error` event with `resetAt` if the monthly cap is hit. Runs *after* safety so blocks aren't charged.
+3. **Budget reserve** (`coach_budget_reserve`, keyed on the per-turn `requestId`) — reserves a
+   cost-weighted credit estimate (plan-dependent cap; `mode=pro` reserves Pro-weighted). `BUDGET_EXCEEDED`
+   `error` event with `resetAt` + `plan` if the cap is hit. Runs *after* safety so blocks aren't charged.
 4. **Pre-fetch context** every turn: `getUserProfile`, `getUserGoal`, `getCurrentTargets`,
    `getTodayMacros`, `getWeightTrend`; notes injected first turn only. RAG: `HybridRetriever` →
    `<kb_context>` block.
@@ -81,11 +84,13 @@ non-entitled users. Single-flight per `(userId, chatId)` → `409 IN_FLIGHT`.
    bearer token so Supabase RLS enforces ownership. `tool_start`/`tool_done` SSE events stream live.
 6. **Escalation** — retry on the Pro model when Flash Lite emits `<<NEEDS_ESCALATION>>`, on
    `finish_reason=length`, on > 3 tool calls, or `COMPLEX_REASONING`. Pro pass runs READ_ONLY tools.
+   `mode=fast` suppresses this (Lite answers as-is); `mode=pro` skips the Lite pass and runs Pro directly.
 7. **Output sanitize** (`OutputSanitizer`) — strips leaked prompt / dosage / diagnosis / URLs and the
    raw `(KB: …)` markers; one stricter retry then a generic fallback. The whole cleaned answer is
    emitted as **one buffered `token` event** (not incremental), then `citation` events.
-8. **Persist + reconcile** — assistant `coach_message` (tokens, model, escalated, citations) +
-   `coach_trace`; `coach_budget_reconcile` with actuals (`release`/`exempt` on cancel/block).
+8. **Persist + reconcile** — assistant `coach_message` (Lite+Pro token segments, model, escalated,
+   citations) + `coach_trace`; `coach_budget_reconcile` with per-segment actuals → weighted credits
+   (`release`/`exempt` on cancel/block).
 9. First turn only: fire-and-forget title generation → `title` event + `coach_chat.title`.
 
 Long chats are auto-compacted (`ConversationCompactor`, 8k–16k window → `coach_summary`).
@@ -95,14 +100,18 @@ System prompt: `coach/agent/SystemPromptV1.kt` (`CoachPromptVersion` — current
 
 ## Data model
 
-Applied to **dev** (`tpslgveyjldykkkhnifs`) and **prod** (`anqvtpesmddllplyhkrc`, on 2026-07-03).
-Canonical reference: **`db/migrations/005_coach_baseline.sql`** (12 tables, 39 functions, RLS, realtime).
+Applied to **dev** (`tpslgveyjldykkkhnifs`) and **prod** (`anqvtpesmddllplyhkrc`). Baseline:
+**`db/migrations/005_coach_baseline.sql`** (12 tables, RLS, realtime); the cost-weighted credit
+budget extends it via **`006`–`011`** (see Token budget & economics).
 
-- **`public`** (RLS: self-`select` only; all writes service-role): `coach_chat`, `coach_message`,
-  `coach_user_note`, `coach_summary`, `coach_trace`, `coach_budget`, `coach_kb_doc`, `coach_kb_chunk`,
-  and the backend-wide `user_entitlement`.
+- **`public`** (RLS: self-`select` only; all writes service-role): `coach_chat`, `coach_message`
+  (+ `pro_input_tokens`/`pro_output_tokens` segment columns), `coach_user_note`, `coach_summary`,
+  `coach_trace`, `coach_budget` (+ `credits_used`/`pro_credits_used`), `coach_credit_topup`
+  (purchased packs, self-`select`), `coach_kb_doc`, `coach_kb_chunk`, and the backend-wide
+  `user_entitlement` (+ `is_trial`).
 - **`coach_internal`** (no client access; service-role only): `coach_turn` (per-request idempotency +
-  turn lease), `processed_revenuecat_event` (webhook idempotency), `coach_budget_reservation`.
+  turn lease), `processed_revenuecat_event` (webhook idempotency), `coach_budget_reservation`
+  (+ credit-draw bookkeeping: `reserved_credits`, `monthly_credits`, `topup_draws`, `cap_credits`).
 - **Realtime:** `coach_chat` + `coach_message` are in the `supabase_realtime` publication (client
   fallback if SSE drops).
 - **Idempotency key is `request_id`** (the per-turn UUID), not `message_id` — turn/budget/RC RPCs all
@@ -137,14 +146,85 @@ Canonical reference: **`db/migrations/005_coach_baseline.sql`** (12 tables, 39 f
 
 ---
 
-## Token budget & economics
+## Token budget & economics (cost-weighted "Coach Credits")
 
-Atomic monthly cap enforced **before** the LLM. `coach_budget_reserve` → `reconcile` (actuals) →
-`release`/`exempt` (cancel/block), all `coach_internal` core + thin `public.coach_budget_*` wrappers,
-keyed on `request_id`, `greatest(0,…)`-clamped. Caps from `CoachModels.budgetCapsFor()` =
-`(400 messages, 8_409_600 tokens)` — the message cap is the binding gate, the token cap a backstop.
-Stale reservations are reconciled/released by `coach_release_stale_budget_reservations` (called from the
-retention path). Retention: `coach-retention` Job hard-deletes archived chats older than 12 months.
+The monthly budget is **cost-weighted credits**, not a flat message count — a turn answered by the
+Pro model costs proportionally more, so Lite-only users get many messages while Pro usage drains the
+pool faster (like Claude's usage model). Migrated from the old message counter via
+`db/migrations/006–011` (schema on top of `005_coach_baseline.sql`).
+
+**Credit model.** 1 credit = 1 Lite input token ($0.25 / 1M). Gemini prices Pro
+(`gemini-3.5-flash`) at exactly 6× Lite (`gemini-3.1-flash-lite`) on both sides, so the weights are
+exact integers:
+
+| Token kind | Price / 1M | Weight |
+|---|---|---|
+| Lite input | $0.25 | ×1 |
+| Lite output | $1.50 | ×6 |
+| Pro input | $1.50 | ×6 |
+| Pro output | $9.00 | ×36 |
+| Cached input | 25% of input | ×0.25 (Lite) — SQL-ready; Kotlin passes 0 (koog 1.0.0 exposes no cached count) |
+
+An **escalated turn charges both segments** (Lite pass + Pro retry ≈ 7× a Lite turn — the real cost).
+The authoritative weighting lives in **one SQL function** `coach_internal.budget_credits(lite_in,
+lite_out, pro_in, pro_out, cached_in)`; Kotlin only mirrors the weights for the reserve-time estimate.
+
+**Caps** (`CoachModels.budgetCapsFor(isTrial)`):
+
+| Cap | Value | Worst-case COGS |
+|---|---|---|
+| Premium monthly | **2,200,000 credits** | ~$0.55 ≈ €0.51/user/mo (~25% of worst-case net revenue) |
+| Trial | **275,000 credits** (12.5%) | ~€0.06/trial |
+| Message backstop | 1,000 msgs/mo | abuse guard only — never binds in normal use |
+
+**Reserve → reconcile.** `coach_budget_reserve` (8-arg overload) reserves a **Lite-weighted**
+estimate at turn start (`mode=pro` reserves Pro-weighted); it draws the monthly pot first, then
+purchased top-up packs (oldest non-expired first), recording the exact split on the reservation.
+`coach_budget_reconcile` (6-arg, per-segment) at turn end **refunds the reserved draws and re-draws
+the actual weighted cost** in one transaction — it **never rejects** (worst overshoot ≈ 267k credits
+for one fully-escalated max turn — 20k-token input cap × (1 + 6) + 1024 Lite-out × 6 + 4096 Pro-out
+× 36, minus the Lite-weighted reserve estimate; ~$0.067 one-time, accepted). Pro-segment credits
+also feed the monotonic
+`coach_budget.pro_credits_used` display counter. `release`/`exempt` (cancel/hard-block) refund the
+recorded split exactly. All keyed on `request_id`, advisory-locked, `greatest(0,…)`-clamped.
+`coach_release_stale_budget_reservations` settles orphaned reservations, deriving Lite/Pro segments
+from `coach_message.pro_input_tokens/pro_output_tokens` (legacy escalated rows → charged all-Pro,
+conservative). Retention: `coach-retention` Job hard-deletes archived chats older than 12 months.
+
+**Model selector.** `SendMessageRequest.mode` = `auto` (default — Lite with automatic Pro
+escalation) · `fast` (Lite only; escalation triggers ignored *and* the `<<NEEDS_ESCALATION>>`
+self-signal removed from the prompt so Lite always answers) · `pro` (straight to Pro, ~6× the credit
+burn). Bad value → `400 INVALID_MODE`; the mode is echoed on the `done` event.
+
+**Top-ups.** RevenueCat consumables (product `coach_credits_5m` → 5,000,000 credits, ~€5). Granted
+idempotently on `rc_transaction_id` via `coach_grant_credit_topups`, driven from the live subscriber
+snapshot in `RevenueCatSyncService` (never the event body), env-gated by `is_sandbox`. **12-month
+expiry**, enforced solely by the reserve/reconcile draw filter — consumed only after the monthly pot,
+never touched by the monthly reset. Purchased credits are **not** money-denominated to the user; the
+recommended display is estimated messages remaining, or a separate "purchased credits" bar.
+
+**Economics — what a message costs** (typical turn ≈ 10k input incl. system prompt + RAG + history,
+600 output):
+
+| Turn type | Credits | Messages/mo at cap |
+|---|---|---|
+| Light Lite (6k/400) | 8,400 | ~261 |
+| Typical Lite (10k/600) | 13,600 | ~161 |
+| Heavy Lite (15k/800) | 19,800 | ~111 |
+| Pure Pro (`mode=pro`) | 81,600 | ~26 |
+| Escalated (Lite + Pro retry) | 95,200 | ~23 |
+
+**Margin** (worst case = every subscriber maxes the cap; yearly €30 = €2.50/mo gross, monthly €4.50):
+
+| Plan / store fee | Net €/mo | Worst-case margin | At ~40% avg utilization |
+|---|---|---|---|
+| Yearly €30 @ 15% | 2.13 | 1.62 (76%) | 1.92 |
+| Yearly €30 @ 30% | 1.75 | 1.24 (71%) | 1.55 |
+| Monthly €4.50 @ 15% | 3.83 | 3.32 (87%) | 3.62 |
+| Monthly €4.50 @ 30% | 3.15 | 2.64 (84%) | 2.95 |
+
+Even the doomsday cohort (30% fee, yearly, 100% of subscribers maxing out) keeps ~71% of net revenue
+for the other AI features. Escalation just drains the pool faster — it can't blow the cap.
 
 ---
 
@@ -163,7 +243,20 @@ retention path). Retention: `coach-retention` Job hard-deletes archived chats ol
 - **Lazy sync-on-miss:** the coach `PremiumGate`, on a no-active-row miss, does a one-time live
   `GET /v1/subscribers/{userId}` + reconcile then re-checks (negative-cached) — so existing subscribers
   who never fired a fresh webhook self-heal on first coach use. Needs `REVENUECAT_REST_API_KEY` on the
-  coach service.
+  coach service. `requirePremium` returns the caller's `CoachPlan` (PREMIUM | TRIAL) from the same
+  query, selecting the credit cap.
+- **Trial detection:** RevenueCat `period_type == "trial"` → `user_entitlement.is_trial` (via the
+  reconcile RPC), driving the reduced trial credit cap.
+- **Credit top-ups:** consumable purchases in the subscriber snapshot (`non_subscriptions`) map to
+  `coach_credit_topup` grants — same sync path, idempotent on `rc_transaction_id`. Grants are
+  env-gated (`is_sandbox` must match the sync environment) so free sandbox purchases can't mint real
+  credits in prod.
+- **⚠️ Top-up delivery gap + fix:** an already-premium user never triggers lazy-sync-on-miss (they
+  don't miss the gate), so a top-up reaches them **only via the webhook**. If the webhook is dropped,
+  there's no self-heal. The **`POST /api/coach/purchases/sync`** endpoint closes this: it force-syncs
+  the subscriber (reconcile entitlements + grant missed top-ups) on demand. Client must call it after
+  a purchase completes and on coach-screen open. The `rc-sweeper` only retries *received* events — it
+  can't recover a *never-delivered* webhook, which is why the sync endpoint exists.
 
 ---
 
@@ -171,7 +264,10 @@ retention path). Retention: `coach-retention` Job hard-deletes archived chats ol
 
 - **Model IDs are code constants** in `com.zenthek.coach.config.CoachModels` (not env): primary
   `gemini-3.1-flash-lite`, escalation `gemini-3.5-flash`, plus `USER_TZ_FALLBACK`. Embeddings
-  `gemini-embedding-2`.
+  `gemini-embedding-2`. Same object holds the **budget constants** (`CAP_CREDITS_PER_MONTH=2_200_000`,
+  `CAP_CREDITS_TRIAL=275_000`, `CAP_MESSAGES_PER_MONTH=1_000` backstop, credit weights) and the
+  **top-up product map** (`TOPUP_PRODUCT_CREDITS = {"coach_credits_5m": 5_000_000}`) — all code-review-
+  gated, no env flips.
 - **Config** = `coach/config/CoachConfig.kt`. Secrets only: `GEMINI_API_KEY`, `SUPABASE_URL`,
   `SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, and optional `REVENUECAT_REST_API_KEY`
   (+ `REVENUECAT_REST_BASE_URL`) for lazy sync. No coach-specific model/tuning env vars.
@@ -217,13 +313,18 @@ The old frozen spec assumed some things that changed during the build; recorded 
 
 ---
 
-## Status (2026-07-03)
+## Status (2026-07-04)
 
-The coach feature is complete and ready to operate. Current production state:
+The coach feature is live in production. Current state:
 
-- Coach schema is applied to **prod** and dev/prod parity is verified (`005_coach_baseline.sql`).
-- Lazy sync-on-miss is implemented in `PremiumGate`.
-- Prod KB corpus ingest is complete (51 docs / 409 chunks across all 5 sections; matches the repo corpus, 0 null embeddings).
+- Base coach schema (`005_coach_baseline.sql`) applied to dev + prod; parity verified.
+- **Cost-weighted credit budget** (migrations `006`–`011`) — **shipped 2026-07-04.** All migrations
+  applied to dev + prod; both services redeployed (`fitzenia-coach-prod` rev 00004, `fitzenia-api-prod`
+  rev 00034). `011` cleanup applied to prod — only the credit-weighted RPC signatures remain
+  (`cents_estimated` and the legacy 7-arg reserve / 3-arg reconcile overloads dropped; the stale
+  sweeper re-pointed onto the 6-arg reconcile). Prod DB verified.
+- Lazy sync-on-miss + trial detection + credit top-ups implemented in `PremiumGate` / `RevenueCatSyncService`.
+- Prod KB corpus ingest complete (51 docs / 409 chunks, 0 null embeddings).
 - Coach service, jobs, schedulers, secrets, and the RevenueCat webhook are managed through the runbook above.
 - Observability (Langfuse/BigQuery) remains a fast-follow enhancement, not a feature blocker.
 
@@ -234,7 +335,8 @@ The coach feature is complete and ready to operate. Current production state:
 | Concern | Path |
 |---|---|
 | Coach module wiring | `src/main/kotlin/com/zenthek/coach/CoachApplication.kt` |
-| Streaming routes + turn flow | `…/coach/routes/ChatRoutes.kt`; management/notes: `…/coach/routes/NotesRoutes.kt` |
+| Streaming routes + turn flow | `…/coach/routes/ChatRoutes.kt`; management/notes: `…/coach/routes/NotesRoutes.kt`; usage: `…/coach/routes/UsageRoutes.kt` |
+| Model selector + period helpers | `…/coach/routes/CoachMode.kt`, `…/coach/routes/BudgetPeriod.kt` |
 | SSE event DTOs | `…/coach/stream/SseProtocol.kt` |
 | Premium gate (+ lazy sync-on-miss) | `…/coach/auth/PremiumGate.kt` |
 | Agent + system prompt | `…/coach/agent/CoachAgentFactory.kt`, `…/coach/agent/SystemPromptV1.kt` |
@@ -245,5 +347,5 @@ The coach feature is complete and ready to operate. Current production state:
 | Models / budget caps | `…/coach/config/{CoachModels,CoachConfig}.kt` |
 | RevenueCat sync | `…/revenuecat/{RevenueCatSyncService,RevenueCatRestClient,RevenueCatEntitlementGateway,RevenueCatSweeperMain}.kt`; webhook in `src/main/kotlin/Application.kt` + `routes/Routing.kt` |
 | Jobs | `…/coach/ingest/CoachIngestMain.kt`, `…/coach/retention/CoachRetentionSweeperMain.kt` |
-| Schema | `db/migrations/005_coach_baseline.sql` |
+| Schema | `db/migrations/005_coach_baseline.sql` (baseline) + `006`–`011` (cost-weighted credits) |
 | Manual-test surface | `tools/coach-tester.html`, `tools/rc-webhook-tester.sh` |

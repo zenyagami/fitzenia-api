@@ -11,10 +11,17 @@ import io.ktor.client.request.header
 import io.ktor.client.request.parameter
 import io.ktor.http.isSuccess
 import io.ktor.server.application.ApplicationCall
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.jsonArray
 import org.slf4j.LoggerFactory
 import java.util.concurrent.ConcurrentHashMap
+
+/** The caller's plan, for cap selection (trial entitlements get the reduced credit cap). */
+enum class CoachPlan(val wire: String) {
+    PREMIUM("premium"),
+    TRIAL("trial"),
+}
 
 class PremiumGate(
     private val httpClient: HttpClient,
@@ -31,11 +38,15 @@ class PremiumGate(
     // gate miss. In-memory + per-instance — rebuilt on cold start (stateless-friendly).
     private val negativeUntil = ConcurrentHashMap<String, Long>()
 
-    suspend fun requirePremium(call: ApplicationCall, entitlementId: String = "premium") {
+    /**
+     * Gates the call and returns the caller's [CoachPlan] (from the same entitlement
+     * lookup — no extra round-trip). Callers that only gate can ignore the return value.
+     */
+    suspend fun requirePremium(call: ApplicationCall, entitlementId: String = "premium"): CoachPlan {
         val userId = call.requireAuthenticatedUser().userId
 
         // Entitlements are driven by RevenueCat → user_entitlement. Fast path: a live active row.
-        if (fetchActive(userId, entitlementId)) return
+        fetchActiveRow(userId, entitlementId)?.let { return it.plan }
 
         // Lazy sync-on-miss: existing RevenueCat subscribers never fired a fresh webhook, so
         // they may have no user_entitlement row yet. Reconcile once against the live RC subscriber
@@ -52,7 +63,7 @@ class PremiumGate(
                 }
                 .isSuccess
             if (synced) {
-                if (fetchActive(userId, entitlementId)) return
+                fetchActiveRow(userId, entitlementId)?.let { return it.plan }
                 // Sync succeeded but no active entitlement → genuinely not premium; cache the miss.
                 negativeUntil[userId] = System.currentTimeMillis() + MISS_TTL_MS
             }
@@ -68,7 +79,13 @@ class PremiumGate(
         return false
     }
 
-    private suspend fun fetchActive(userId: String, entitlementId: String): Boolean =
+    @Serializable
+    private data class ActiveEntitlementRow(@SerialName("is_trial") val isTrial: Boolean = false) {
+        val plan: CoachPlan get() = if (isTrial) CoachPlan.TRIAL else CoachPlan.PREMIUM
+    }
+
+    /** The active entitlement row (with trial status), or null when none / on lookup failure. */
+    private suspend fun fetchActiveRow(userId: String, entitlementId: String): ActiveEntitlementRow? =
         runCatching {
             val response = httpClient.get("$supabaseUrl/rest/v1/user_entitlement") {
                 header("apikey", serviceRoleKey)
@@ -76,16 +93,18 @@ class PremiumGate(
                 parameter("user_id", "eq.$userId")
                 parameter("entitlement_id", "eq.$entitlementId")
                 parameter("active", "eq.true")
-                parameter("select", "user_id")
+                parameter("select", "is_trial")
                 parameter("limit", "1")
             }
-            if (!response.status.isSuccess()) return@runCatching false
+            if (!response.status.isSuccess()) return@runCatching null
             val body: String = response.body()
-            Json.parseToJsonElement(body).jsonArray.isNotEmpty()
+            json.decodeFromString<List<ActiveEntitlementRow>>(body).firstOrNull()
         }.getOrElse { e ->
             log.error("[COACH-GATE] entitlement check failed userId={} error={}", userId, e.message)
-            false
+            null
         }
+
+    private val json = Json { ignoreUnknownKeys = true }
 
     private companion object {
         const val MISS_TTL_MS = 10 * 60 * 1000L // confirmed non-premium: skip re-syncing for 10 min

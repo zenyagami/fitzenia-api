@@ -3,6 +3,8 @@ package com.zenthek.coach.agent
 import ai.koog.agents.core.tools.ToolDescriptor
 import ai.koog.prompt.Prompt
 import ai.koog.prompt.executor.clients.google.GoogleLLMClient
+import ai.koog.prompt.executor.clients.google.GoogleParams
+import ai.koog.prompt.executor.clients.google.models.GoogleThinkingConfig
 import ai.koog.prompt.executor.llms.MultiLLMPromptExecutor
 import ai.koog.prompt.llm.LLMCapability
 import ai.koog.prompt.llm.LLMProvider
@@ -21,6 +23,22 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 
 private const val MAX_TOOL_ITERATIONS = 5
+
+// Gemini "thinking" models spend part of maxOutputTokens on invisible reasoning before writing
+// the visible answer. Left unset (plain LLMParams -> GoogleParams(thinkingConfig = null)),
+// thinking defaults to dynamic/unbounded and can consume nearly the whole cap, truncating the
+// visible answer at finish_reason=MAX_TOKENS (confirmed against the live API: with no
+// thinkingConfig, gemini-3.5-flash spent 1793 of a 2048-token budget on thoughts, leaving only
+// 251 visible tokens). Bounding thinkingBudget reserves guaranteed headroom for the answer.
+private const val LITE_MAX_OUTPUT_TOKENS = 1024
+private const val LITE_THINKING_BUDGET = 384
+// 4096 (not 2048): confirmed via live probe that 2048 still truncates a genuinely demanding
+// escalated ask (full multi-section plan) even with thinkingBudget bounded; 4096 completed the
+// same prompt with ~34% headroom to spare. Raises the documented worst-case reserve/reconcile
+// overshoot in docs/AI_COACH.md from ~194k to ~267k credits (~$0.018 more, negligible vs the
+// $0.51/user/mo COGS budget) — update that figure if this constant changes again.
+private const val PRO_MAX_OUTPUT_TOKENS = 4096
+private const val PRO_THINKING_BUDGET = 768
 
 class CoachAgentFactory(apiKey: String) {
 
@@ -127,13 +145,18 @@ class CoachAgentFactory(apiKey: String) {
         userContext: String? = null,
         summaryContext: String? = null,
         toolRunner: CoachToolRunner? = null,
+        allowEscalationMarker: Boolean = true,
     ): Flow<CoachFrame> = flow {
         // The Pro model is the escalation target, so it never carries the self-signal instruction.
+        // Callers that will never run the Pro retry (mode=fast) also disable it — the prompt tells
+        // the model to reply with ONLY the marker, which would leave those users with no answer.
         val systemPrompt = SystemPromptV1.build(
-            locale, strictMode, userContext, summaryContext, allowEscalationMarker = !escalate,
+            locale, strictMode, userContext, summaryContext,
+            allowEscalationMarker = allowEscalationMarker && !escalate,
         )
         val activeModel = if (escalate) escalationModel else primaryModel
-        val maxOutputTokens = if (escalate) 2048 else 1024
+        val maxOutputTokens = if (escalate) PRO_MAX_OUTPUT_TOKENS else LITE_MAX_OUTPUT_TOKENS
+        val thinkingBudget = if (escalate) PRO_THINKING_BUDGET else LITE_THINKING_BUDGET
         val userContent = if (kbContext != null) "$kbContext\n\n$userMessage" else userMessage
 
         val messages = mutableListOf<Message>()
@@ -166,7 +189,14 @@ class CoachAgentFactory(apiKey: String) {
             var endFrame: StreamFrame.End? = null
 
             executor.executeStreaming(
-                prompt = Prompt(messages = messages, id = chatId, params = LLMParams(maxTokens = maxOutputTokens)),
+                prompt = Prompt(
+                    messages = messages,
+                    id = chatId,
+                    params = GoogleParams(
+                        maxTokens = maxOutputTokens,
+                        thinkingConfig = GoogleThinkingConfig(thinkingBudget = thinkingBudget),
+                    ),
+                ),
                 model = activeModel,
                 tools = tools,
             ).collect { frame ->

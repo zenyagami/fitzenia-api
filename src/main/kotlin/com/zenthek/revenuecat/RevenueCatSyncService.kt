@@ -1,5 +1,6 @@
 package com.zenthek.revenuecat
 
+import com.zenthek.coach.config.CoachModels
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -121,6 +122,43 @@ class RevenueCatSyncService(
         val subscriber = rest.fetchSubscriber(userId)
         val items = mapEntitlements(subscriber)
         gateway.reconcile(userId, rcAppUserId = userId, environment = environment, entitlements = items)
+        // Credit top-ups (consumables) ride the same snapshot: idempotent on the RC
+        // transaction id, so webhook replays and sweeper re-syncs never double-grant.
+        val grants = mapTopUpGrants(subscriber, environment)
+        if (grants.isNotEmpty()) {
+            val inserted = gateway.grantTopUps(userId, environment, grants)
+            if (inserted > 0) {
+                log.info("[COACH-RC] topup_granted userId={} newPacks={}", userId, inserted)
+            }
+        }
+    }
+
+    /**
+     * Known coach credit packs from the subscriber's consumables. Environment-gated: sandbox
+     * purchases only grant when syncing SANDBOX (and vice versa), mirroring how entitlements
+     * carry `revenuecat_environment`. Unknown consumable product ids are skipped — they may
+     * be future non-coach products.
+     */
+    private fun mapTopUpGrants(subscriber: RevenueCatSubscriber, environment: String): List<TopUpGrantItem> {
+        val sandboxSync = environment == "SANDBOX"
+        return subscriber.nonSubscriptions.flatMap { (productId, purchases) ->
+            val credits = CoachModels.TOPUP_PRODUCT_CREDITS[productId]
+            if (credits == null) {
+                log.debug("[COACH-RC] unknown consumable productId={} skipped", productId)
+                return@flatMap emptyList()
+            }
+            purchases.mapNotNull { purchase ->
+                val txnId = purchase.id?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                if (purchase.isSandbox != sandboxSync) return@mapNotNull null
+                TopUpGrantItem(
+                    rcTransactionId = txnId,
+                    productId = productId,
+                    store = purchase.store,
+                    credits = credits,
+                    purchasedAt = purchase.purchaseDate,
+                )
+            }
+        }
     }
 
     /** Resolve every UUID-shaped candidate against `auth.users`; transient lookup errors throw. */
@@ -140,14 +178,15 @@ class RevenueCatSyncService(
     private fun mapEntitlements(subscriber: RevenueCatSubscriber): List<EntitlementReconcileItem> {
         val now = Instant.now()
         return subscriber.entitlements.map { (entitlementId, ent) ->
-            val store = ent.productIdentifier?.let { subscriber.subscriptions[it]?.store }
+            val subscription = ent.productIdentifier?.let { subscriber.subscriptions[it] }
             EntitlementReconcileItem(
                 entitlementId = entitlementId,
                 active = isActive(ent.expiresDate, ent.gracePeriodExpiresDate, now),
                 expiresAt = ent.expiresDate,
                 gracePeriodEndsAt = ent.gracePeriodExpiresDate,
                 productId = ent.productIdentifier,
-                store = store,
+                store = subscription?.store,
+                isTrial = subscription?.periodType.equals("trial", ignoreCase = true),
             )
         }
     }

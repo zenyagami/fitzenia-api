@@ -13,6 +13,7 @@ import com.zenthek.coach.rag.EmbeddingClient
 import com.zenthek.coach.rag.HybridRetriever
 import com.zenthek.coach.routes.configureCoachRouting
 import com.zenthek.coach.routes.configureNotesRouting
+import com.zenthek.coach.routes.configureUsageRouting
 import com.zenthek.config.SupabaseJwtVerificationMode
 import com.zenthek.fitzenio.rest.configureSerialization
 import com.zenthek.revenuecat.RevenueCatEntitlementGateway
@@ -88,6 +89,7 @@ fun Application.module() {
         budgetGateway   = budgetGateway,
     )
     configureNotesRouting(notesGateway = notesGateway, premiumGate = premiumGate)
+    configureUsageRouting(budgetGateway = budgetGateway, premiumGate = premiumGate, revenueCatSync = revenueCatSync)
 }
 
 private fun Application.configureCoachCors() {

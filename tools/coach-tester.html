@@ -45,6 +45,16 @@
     .event.tool-event strong { color: #9a6700; }
     .tool-ms { color: #888; font-size: 0.85em; margin-left: 6px; }
     .tool-spinner { color: #e8a001; }
+    /* Usage panel */
+    #usagePanel { margin-top: 8px; }
+    .usage-row { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+    .usage-label { width: 90px; flex-shrink: 0; font-size: 0.9em; }
+    .usage-track { flex: 1; height: 14px; background: #eee; border: 1px solid #ccc; border-radius: 3px; overflow: hidden; }
+    .usage-fill { height: 100%; background: #1a73e8; transition: width 0.3s; }
+    .usage-fill.pro { background: #e8a001; }
+    .usage-fill.warn { background: #c00; }
+    .usage-pct { width: 140px; flex-shrink: 0; font-size: 0.85em; color: #555; text-align: right; }
+    #usageMeta { color: #888; font-size: 0.85em; margin-top: 6px; }
     /* Notes panel */
     #notesList { margin-top: 8px; max-height: 220px; overflow-y: auto; border: 1px solid #ddd; background: #fafafa; }
     .note-item { display: flex; align-items: flex-start; padding: 6px 8px; border-bottom: 1px solid #eee; gap: 8px; }
@@ -96,14 +106,21 @@
   </fieldset>
 
   <fieldset>
-    <legend>3. Notes</legend>
+    <legend>3. Usage (this month)</legend>
+    <button onclick="loadUsage()">↻ Refresh Usage</button>
+    <div id="usagePanel"><em style="color:#aaa; padding:8px; display:block">Click Refresh to load usage… (auto-refreshes after each turn)</em></div>
+    <div id="usageMeta"></div>
+  </fieldset>
+
+  <fieldset>
+    <legend>4. Notes</legend>
     <button onclick="loadNotes()">↻ Refresh Notes</button>
     <div id="notesList"><em style="color:#aaa; padding:8px; display:block">Click Refresh to load notes…</em></div>
     <div id="notesStatus"></div>
   </fieldset>
 
   <fieldset>
-    <legend>4. Send Message</legend>
+    <legend>5. Send Message</legend>
     <label>Chat ID <small style="color:#888">(leave blank to create a new chat)</small>
       <input id="chatId" placeholder="auto-filled after first message or click a chat above">
     </label>
@@ -113,12 +130,19 @@
     <label>Locale
       <input id="locale" value="en" style="width:80px">
     </label>
+    <label>Mode
+      <select id="mode" style="width:120px; font-family:monospace">
+        <option value="auto" selected>auto</option>
+        <option value="fast">fast</option>
+        <option value="pro">pro</option>
+      </select>
+    </label>
     <button onclick="sendMessage()">Send &#x2192; SSE</button>
     <button id="clearBtn" onclick="clearEvents()" style="margin-left:8px">Clear events</button>
   </fieldset>
 
   <fieldset>
-    <legend>5. SSE Events</legend>
+    <legend>6. SSE Events</legend>
     <div id="events"><em style="color:#aaa">Events appear here…</em></div>
   </fieldset>
 
@@ -206,6 +230,43 @@
         }
       } finally {
         document.body.removeChild(textarea);
+      }
+    }
+
+    async function loadUsage() {
+      if (!jwt) { alert('Login first or paste a JWT'); return; }
+      const panel = document.getElementById('usagePanel');
+      const meta = document.getElementById('usageMeta');
+      try {
+        const resp = await fetch(`${getCoachUrl()}/api/coach/usage`, {
+          headers: { 'Authorization': `Bearer ${jwt}` },
+        });
+        if (!resp.ok) {
+          panel.innerHTML = `<em style="color:#c00">✗ HTTP ${resp.status}: ${escapeHtml(await resp.text())}</em>`;
+          return;
+        }
+        const u = await resp.json();
+        const fmt = n => Number(n).toLocaleString();
+        const totalCls = u.total.percent >= 90 ? 'warn' : '';
+        panel.innerHTML = `
+          <div class="usage-row">
+            <span class="usage-label">All models</span>
+            <span class="usage-track"><span class="usage-fill ${totalCls}" style="width:${u.total.percent}%"></span></span>
+            <span class="usage-pct">${u.total.percent}% (${fmt(u.total.used)} / ${fmt(u.total.limit)})</span>
+          </div>
+          <div class="usage-row">
+            <span class="usage-label">Pro</span>
+            <span class="usage-track"><span class="usage-fill pro" style="width:${u.pro.percentOfLimit}%"></span></span>
+            <span class="usage-pct">${u.pro.percentOfLimit}% (${fmt(u.pro.usedCredits)})</span>
+          </div>
+        `;
+        const reset = new Date(u.resetAt).toLocaleString();
+        const topup = u.topUp.granted > 0
+          ? ` | purchased: ${fmt(u.topUp.granted - u.topUp.remaining)} used / ${fmt(u.topUp.remaining)} left`
+          : '';
+        meta.textContent = `plan: ${u.plan} | messages: ${u.messagesUsed} | resets: ${reset}${topup}`;
+      } catch (e) {
+        panel.innerHTML = `<em style="color:#c00">✗ ${escapeHtml(e.message)}</em>`;
       }
     }
 
@@ -387,6 +448,7 @@
       const chatIdInput = document.getElementById('chatId').value.trim();
       const content = document.getElementById('message').value.trim();
       const locale = document.getElementById('locale').value.trim() || 'en';
+      const mode = document.getElementById('mode').value;
 
       if (!content) { alert('Enter a message'); return; }
 
@@ -403,7 +465,7 @@
             'Authorization': `Bearer ${jwt}`,
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({ content, locale }),
+          body: JSON.stringify({ content, locale, mode }),
         });
 
         if (!resp.ok) {
@@ -458,9 +520,11 @@
                 : '';
               const modelInfo = donePayload.model ? ` | model:${donePayload.model}` : '';
               const escalatedInfo = donePayload.escalated ? ' | escalated:true' : '';
-              appendEvent('done', `chatId:${donePayload.chatId} | msgId:${donePayload.messageId}${tokensInfo}${modelInfo}${escalatedInfo}`);
-              // Refresh sidebar message count after turn completes
+              const modeInfo = donePayload.mode ? ` | mode:${donePayload.mode}` : '';
+              appendEvent('done', `chatId:${donePayload.chatId} | msgId:${donePayload.messageId}${tokensInfo}${modelInfo}${escalatedInfo}${modeInfo}`);
+              // Refresh sidebar message count + usage bars after turn completes
               setTimeout(loadChats, 500);
+              setTimeout(loadUsage, 700);
             } else if (eventType === 'title') {
               const payload = JSON.parse(dataStr);
               // Update the sidebar entry for this chat so the title appears immediately
