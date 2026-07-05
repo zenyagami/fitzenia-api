@@ -4,10 +4,12 @@ import com.zenthek.auth.SUPABASE_AUTH_PROVIDER
 import com.zenthek.auth.requireAuthenticatedUser
 import com.zenthek.coach.auth.CoachPlan
 import com.zenthek.coach.auth.PremiumGate
+import com.zenthek.coach.config.CoachConfig
 import com.zenthek.coach.config.CoachModels
 import com.zenthek.coach.persistence.BudgetGateway
 import com.zenthek.coach.persistence.BudgetUsageRow
 import com.zenthek.revenuecat.RevenueCatSyncService
+import com.zenthek.revenuecat.toRevenueCatSyncEnvironment
 import com.zenthek.routes.RateLimitNames
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.Application
@@ -59,6 +61,7 @@ data class CoachUsageResponse(
 )
 
 fun Application.configureUsageRouting(
+    config: CoachConfig,
     budgetGateway: BudgetGateway,
     premiumGate: PremiumGate,
     // Present only when REVENUECAT_REST_API_KEY is configured (same gate as lazy sync-on-miss).
@@ -93,7 +96,9 @@ fun Application.configureUsageRouting(
                     }
                     // PRODUCTION env: real users make production purchases; sandbox purchases are free
                     // and must never grant real credits in prod (the grant path is env-gated).
-                    val synced = runCatching { revenueCatSync.syncUserById(user.userId) }
+                    val synced = runCatching {
+                        revenueCatSync.syncUserById(user.userId, config.environment.toRevenueCatSyncEnvironment())
+                    }
                         .onFailure { e ->
                             usageLog.error("[COACH-SYNC] purchase sync failed userId={} error={}", user.userId, e.message)
                         }

@@ -89,7 +89,12 @@ fun Application.module() {
         budgetGateway   = budgetGateway,
     )
     configureNotesRouting(notesGateway = notesGateway, premiumGate = premiumGate)
-    configureUsageRouting(budgetGateway = budgetGateway, premiumGate = premiumGate, revenueCatSync = revenueCatSync)
+    configureUsageRouting(
+        config          = config,
+        budgetGateway   = budgetGateway,
+        premiumGate     = premiumGate,
+        revenueCatSync  = revenueCatSync,
+    )
 }
 
 private fun Application.configureCoachCors() {

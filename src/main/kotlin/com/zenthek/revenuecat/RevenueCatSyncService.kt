@@ -1,6 +1,7 @@
 package com.zenthek.revenuecat
 
 import com.zenthek.coach.config.CoachModels
+import com.zenthek.config.AppEnvironment
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -10,6 +11,15 @@ import java.time.Instant
 
 /** How the webhook route should ack RevenueCat. */
 enum class WebhookAck { OK, UNAUTHORIZED, BAD_REQUEST, RETRY }
+
+/**
+ * Maps this deployment's [AppEnvironment] to the RC-environment string [RevenueCatSyncService.syncUserById]
+ * expects for its on-demand (non-webhook) callers. Deliberately deployment-scoped, not
+ * request-scoped: a client can never influence which value this resolves to, so a
+ * DEVELOPMENT/staging deployment self-heals sandbox top-ups on-demand while a PRODUCTION
+ * deployment keeps assuming real (non-sandbox) purchases for its anti-fraud guard.
+ */
+fun AppEnvironment.toRevenueCatSyncEnvironment(): String = if (isDebug()) "SANDBOX" else "PRODUCTION"
 
 /**
  * Shared RevenueCat → Supabase entitlement sync. One service, two callers:

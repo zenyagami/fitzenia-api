@@ -125,7 +125,9 @@
       "Bash(./gradlew compileKotlin compileTestKotlin -q)",
       "WebFetch(domain:findahelpline.com)",
       "WebFetch(domain:en.wikipedia.org)",
-      "WebFetch(domain:www.revenuecat.com)"
+      "WebFetch(domain:www.revenuecat.com)",
+      "Bash(find ~/.gradle ~/.m2 / -iname \"*koog*http*\" 2>/dev/null | grep -iv node_modules | head -30; echo \"---\"; find ~/.gradle/caches -iname \"*koog-agents*\" 2>/dev/null | head -30)",
+      "mcp__plugin_claude-mem_mcp-search__get_observations"
     ]
   },
   "enableAllProjectMcpServers": true,

@@ -3,6 +3,7 @@ package com.zenthek.coach.auth
 import com.zenthek.auth.requireAuthenticatedUser
 import com.zenthek.coach.config.CoachConfig
 import com.zenthek.revenuecat.RevenueCatSyncService
+import com.zenthek.revenuecat.toRevenueCatSyncEnvironment
 import com.zenthek.service.ForbiddenException
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
@@ -54,7 +55,7 @@ class PremiumGate(
         // at most one RC round-trip per user per TTL window.
         val rcSync = revenueCatSync
         if (rcSync != null && !isNegativeCached(userId)) {
-            val synced = runCatching { rcSync.syncUserById(userId) }
+            val synced = runCatching { rcSync.syncUserById(userId, config.environment.toRevenueCatSyncEnvironment()) }
                 .onFailure { e ->
                     // Transient RC/Supabase error: short TTL so a real premium user isn't locked out
                     // for long once RC recovers.

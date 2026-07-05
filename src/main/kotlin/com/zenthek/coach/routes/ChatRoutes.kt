@@ -34,10 +34,12 @@ import com.zenthek.coach.stream.ToolDonePayload
 import com.zenthek.coach.stream.ToolStartPayload
 import com.zenthek.coach.stream.TokenPayload
 import com.zenthek.coach.stream.TokenUsage
-import com.zenthek.coach.stream.sendSseEvent
+import com.zenthek.coach.stream.sendPing as rawSendPing
+import com.zenthek.coach.stream.sendSseEvent as rawSendSseEvent
 import com.zenthek.routes.RateLimitNames
 import io.ktor.client.HttpClient
 import io.ktor.http.CacheControl
+import io.ktor.utils.io.ByteWriteChannel
 import io.ktor.utils.io.ClosedWriteChannelException
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
@@ -59,7 +61,12 @@ import io.ktor.server.routing.routing
 import ai.koog.prompt.streaming.StreamFrame
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -84,6 +91,12 @@ private val classifier = HardBlockClassifier()
 // ~20k token input cap (heuristic: 4 chars/token)
 private const val INPUT_CHAR_CAP = 80_000
 private const val STREAM_TIMEOUT_MS = 120_000L
+// Cloud Run's front-end can report the connection to the instance as errored (client-visible
+// 503) on a long-lived SSE response that goes silent for too long — observed on turns doing
+// history compaction + a Pro escalation retry, where no real event is written for 10s of
+// seconds while Gemini streams are in flight. A periodic comment-only ping (SSE spec: lines
+// starting with ":" are ignored by EventSource clients) keeps bytes flowing on the connection.
+private const val SSE_PING_INTERVAL_MS = 15_000L
 // Flat token estimate for the system prompt + tool descriptions + KB envelope,
 // added to the (chars/4) estimate of the message + history when reserving budget.
 // Over-reserving is safe — reconcile corrects to actuals at turn-end.
@@ -278,6 +291,21 @@ private suspend fun processMessage(
     try {
         call.response.cacheControl(CacheControl.NoCache(null))
         call.respondBytesWriter(contentType = ContentType.Text.EventStream) {
+            val channel: ByteWriteChannel = this
+            // Guards every write to the channel — the ping ticker below and the turn's own
+            // sendSseEvent calls run on different coroutines and must never interleave bytes.
+            val sseWriteMutex = Mutex()
+            suspend fun sendSseEventGuarded(event: String, data: String) =
+                sseWriteMutex.withLock { channel.rawSendSseEvent(event, data) }
+
+            coroutineScope {
+                val pingJob = launch {
+                    while (isActive) {
+                        delay(SSE_PING_INTERVAL_MS)
+                        runCatching { sseWriteMutex.withLock { channel.rawSendPing() } }
+                    }
+                }
+
             // Budget reservation lifecycle: settle each reservation exactly once.
             var reservationId: String? = null
             var budgetSettled = false
@@ -287,7 +315,7 @@ private suspend fun processMessage(
                 if (chatIdFromPath == null) {
                     val chatRow = chatGateway.createChat(user.userId, body.locale)
                     chatId = chatRow.id
-                    sendSseEvent(
+                    sendSseEventGuarded(
                         "chat_created",
                         sseJson.encodeToString(
                             ChatCreatedPayload.serializer(),
@@ -346,14 +374,14 @@ private suspend fun processMessage(
                             requestId = requestId,
                             safetyAction = "hard_block",
                         )
-                        sendSseEvent(
+                        sendSseEventGuarded(
                             "safety",
                             sseJson.encodeToString(
                                 SafetyPayload.serializer(),
                                 SafetyPayload(action = "hard_block", message = safetyMsg)
                             )
                         )
-                        sendSseEvent(
+                        sendSseEventGuarded(
                             "done",
                             sseJson.encodeToString(
                                 DonePayload.serializer(),
@@ -367,7 +395,7 @@ private suspend fun processMessage(
                                 )
                             )
                         )
-                        return@respondBytesWriter
+                        return@coroutineScope
                     }
                     is ClassifyResult.Pass -> Unit // continue to LLM
                 }
@@ -417,7 +445,7 @@ private suspend fun processMessage(
                         "[COACH-BUDGET] budget_exceeded userId={} chatId={} reason={}",
                         user.userId, chatId, reserveResult.reason
                     )
-                    sendSseEvent(
+                    sendSseEventGuarded(
                         "error",
                         sseJson.encodeToString(
                             BudgetExceededPayload.serializer(),
@@ -433,7 +461,7 @@ private suspend fun processMessage(
                             )
                         )
                     )
-                    return@respondBytesWriter
+                    return@coroutineScope
                 }
                 reservationId = reserveResult?.reservationId
 
@@ -583,7 +611,7 @@ private suspend fun processMessage(
                             }
                             is CoachFrame.ToolStarted -> {
                                 toolCallCount++
-                                sendSseEvent(
+                                sendSseEventGuarded(
                                     "tool_start",
                                     sseJson.encodeToString(
                                         ToolStartPayload.serializer(),
@@ -591,7 +619,7 @@ private suspend fun processMessage(
                                     )
                                 )
                             }
-                            is CoachFrame.ToolFinished -> sendSseEvent(
+                            is CoachFrame.ToolFinished -> sendSseEventGuarded(
                                 "tool_done",
                                 sseJson.encodeToString(
                                     ToolDonePayload.serializer(),
@@ -664,14 +692,14 @@ private suspend fun processMessage(
                                         }
                                         else -> Unit
                                     }
-                                    is CoachFrame.ToolStarted -> sendSseEvent(
+                                    is CoachFrame.ToolStarted -> sendSseEventGuarded(
                                         "tool_start",
                                         sseJson.encodeToString(
                                             ToolStartPayload.serializer(),
                                             ToolStartPayload(name = publicToolStatusName(coachFrame.name)),
                                         )
                                     )
-                                    is CoachFrame.ToolFinished -> sendSseEvent(
+                                    is CoachFrame.ToolFinished -> sendSseEventGuarded(
                                         "tool_done",
                                         sseJson.encodeToString(
                                             ToolDonePayload.serializer(),
@@ -782,14 +810,14 @@ private suspend fun processMessage(
                 }
 
                 // Emit buffered tokens to client
-                sendSseEvent(
+                sendSseEventGuarded(
                     "token",
                     sseJson.encodeToString(TokenPayload.serializer(), TokenPayload(delta = assistantContent))
                 )
 
                 // Emit citation events before done.
                 safeChunks.forEach { chunk ->
-                    sendSseEvent(
+                    sendSseEventGuarded(
                         "citation",
                         sseJson.encodeToString(
                             CitationPayload.serializer(),
@@ -805,7 +833,7 @@ private suspend fun processMessage(
                     }.getOrNull()?.let { generatedTitle ->
                         runCatching { chatGateway.updateChatTitle(chatId, user.userId, generatedTitle) }
                             .onFailure { e -> log.warn("[COACH] updateChatTitle failed chatId={}", chatId, e) }
-                        sendSseEvent(
+                        sendSseEventGuarded(
                             "title",
                             sseJson.encodeToString(
                                 TitlePayload.serializer(),
@@ -838,7 +866,7 @@ private suspend fun processMessage(
                     log.error("[COACH] assistant_persist_failed chatId={}", chatId, e)
                 }.getOrElse { java.util.UUID.randomUUID().toString() }
 
-                sendSseEvent(
+                sendSseEventGuarded(
                     "done",
                     sseJson.encodeToString(
                         DonePayload.serializer(),
@@ -902,7 +930,7 @@ private suspend fun processMessage(
                 } else {
                     log.error("[COACH] SSE stream failed userId={}", user.userId, e)
                     runCatching {
-                        sendSseEvent(
+                        sendSseEventGuarded(
                             "error",
                             sseJson.encodeToString(
                                 SseErrorPayload.serializer(),
@@ -912,6 +940,7 @@ private suspend fun processMessage(
                     }
                 }
             } finally {
+                pingJob.cancel()
                 // Release the reservation if the turn never reconciled (stream cancel,
                 // error, or a reconcile failure). Idempotent: budget_release no-ops unless the
                 // reservation is still 'reserved', so this is safe after a successful reconcile.
@@ -920,6 +949,7 @@ private suspend fun processMessage(
                     runCatching { budgetGateway.release(rid) }
                         .onFailure { e -> log.warn("[COACH-BUDGET] release_failed reservationId={}", rid, e) }
                 }
+            }
             }
         }
     } finally {
