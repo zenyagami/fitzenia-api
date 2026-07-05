@@ -94,8 +94,8 @@ fun Application.configureUsageRouting(
                         )
                         return@post
                     }
-                    // PRODUCTION env: real users make production purchases; sandbox purchases are free
-                    // and must never grant real credits in prod (the grant path is env-gated).
+                    // PRODUCTION env: real users make production purchases; sandbox purchases only
+                    // get the small capped test-tier grant (env-gated inside RevenueCatSyncService).
                     val synced = runCatching {
                         revenueCatSync.syncUserById(user.userId, config.environment.toRevenueCatSyncEnvironment())
                     }

@@ -58,6 +58,7 @@ fun Application.module() {
         RevenueCatSyncService(
             gateway = RevenueCatEntitlementGateway(httpClient, config.supabase.normalizedUrl, config.serviceRoleKey),
             rest = RevenueCatRestClient(httpClient, restApiKey = key, restBaseUrl = config.revenueCatRestBaseUrl),
+            isProductionDeployment = !config.environment.isDebug(),
         )
     }
     if (revenueCatSync != null) {

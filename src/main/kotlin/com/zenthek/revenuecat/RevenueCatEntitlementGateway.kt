@@ -5,12 +5,15 @@ import io.ktor.client.call.body
 import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.get
 import io.ktor.client.request.header
+import io.ktor.client.request.parameter
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.http.isSuccess
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.add
@@ -149,6 +152,32 @@ class RevenueCatEntitlementGateway(
             error("coach_grant_credit_topups failed: ${response.status}")
         }
         return bodyText.trim().toIntOrNull() ?: 0
+    }
+
+    @Serializable
+    private data class SandboxTopupCreditsRow(@SerialName("credits_granted") val creditsGranted: Long)
+
+    /**
+     * Sum of `credits_granted` across all SANDBOX-environment top-ups this user has ever received.
+     * Used to cap the bounded sandbox test-tier grant (see [RevenueCatSyncService]) — a handful of
+     * rows per user, so summing client-side beats standing up a dedicated RPC.
+     */
+    suspend fun sandboxTopupCreditsGranted(userId: String): Long {
+        val response = httpClient.get("$supabaseUrl/rest/v1/coach_credit_topup") {
+            serviceRoleHeaders()
+            parameter("user_id", "eq.$userId")
+            parameter("environment", "eq.SANDBOX")
+            parameter("select", "credits_granted")
+        }
+        val bodyText: String = response.body()
+        if (!response.status.isSuccess()) {
+            log.error("[COACH-RC] sandboxTopupCreditsGranted failed userId={} status={} body={}", userId, response.status, bodyText)
+            error("sandboxTopupCreditsGranted failed: ${response.status}")
+        }
+        return json.decodeFromString(
+            kotlinx.serialization.builtins.ListSerializer(SandboxTopupCreditsRow.serializer()),
+            bodyText,
+        ).sumOf { it.creditsGranted }
     }
 
     /** Sweeper recall: atomically re-claim stuck/failed events for replay. */

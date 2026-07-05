@@ -1,5 +1,6 @@
 package com.zenthek.revenuecat
 
+import com.zenthek.config.AppEnvironment
 import io.github.cdimascio.dotenv.dotenv
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.cio.CIO
@@ -29,6 +30,7 @@ fun main() {
     val exitCode = runBlocking {
         try {
             val dotenv = dotenv { ignoreIfMissing = true }
+            val isProductionDeployment = !AppEnvironment.fromString(dotenv["APP_ENVIRONMENT"]).isDebug()
             val supabaseUrl = dotenv["SUPABASE_URL"]?.trim()?.ifBlank { null }
                 ?: error("Missing SUPABASE_URL")
             val serviceRoleKey = dotenv["SUPABASE_SERVICE_ROLE_KEY"]?.trim()?.ifBlank { null }
@@ -47,7 +49,7 @@ fun main() {
                 val gateway = RevenueCatEntitlementGateway(client, supabaseUrl, serviceRoleKey)
                 val rest = RevenueCatRestClient(client, restApiKey, restBaseUrl)
                 // webhookAuth is unused on the sweeper path (rows are already claimed; no header to verify).
-                val service = RevenueCatSyncService(gateway, rest, webhookAuth = "")
+                val service = RevenueCatSyncService(gateway, rest, webhookAuth = "", isProductionDeployment = isProductionDeployment)
 
                 val claimed = gateway.claimRecoverable(
                     staleAfter = "5 minutes",

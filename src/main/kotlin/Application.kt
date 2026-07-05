@@ -216,6 +216,7 @@ fun Application.module() {
                 restBaseUrl = config.revenueCat.restBaseUrl,
             ),
             webhookAuth = config.revenueCat.webhookAuth!!,
+            isProductionDeployment = !config.environment.isDebug(),
         )
     } else {
         log.info("RevenueCat webhook: disabled (REVENUECAT_* not set)")

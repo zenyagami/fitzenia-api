@@ -39,6 +39,11 @@ class RevenueCatSyncService(
     // Only the webhook path ([handleWebhook]) needs this. Callers that only use [syncUserById]
     // (the coach PremiumGate's lazy sync-on-miss) construct the service without it.
     private val webhookAuth: String = "",
+    // Deployment-scoped, constructor-level — never derived from a per-call/event value. Gates the
+    // sandbox top-up anti-fraud check in [mapTopUpGrants] the same way for every caller (webhook,
+    // sweeper, or on-demand pull): a sandbox-flagged purchase never earns full value on a PRODUCTION
+    // deployment, no matter which environment string an individual call or RC event reports.
+    private val isProductionDeployment: Boolean = false,
 ) {
     private val log = LoggerFactory.getLogger(RevenueCatSyncService::class.java)
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
@@ -134,23 +139,44 @@ class RevenueCatSyncService(
         gateway.reconcile(userId, rcAppUserId = userId, environment = environment, entitlements = items)
         // Credit top-ups (consumables) ride the same snapshot: idempotent on the RC
         // transaction id, so webhook replays and sweeper re-syncs never double-grant.
-        val grants = mapTopUpGrants(subscriber, environment)
+        val grants = mapTopUpGrants(subscriber)
         if (grants.isNotEmpty()) {
             val inserted = gateway.grantTopUps(userId, environment, grants)
             if (inserted > 0) {
                 log.info("[COACH-RC] topup_granted userId={} newPacks={}", userId, inserted)
             }
         }
+
+        // A PRODUCTION deployment never full-grants a sandbox-flagged purchase (mapTopUpGrants
+        // already dropped it above) — regardless of transport (webhook, sweeper replay, or on-demand
+        // pull) or what environment string that particular call happens to report; a delivered
+        // webhook reports the EVENT's environment, which can say SANDBOX even while this deployment
+        // is PRODUCTION. Instead it earns a small bounded "proves the purchase unlocks something"
+        // grant, capped once per user lifetime, so a repeatable $0 sandbox purchase (App Store
+        // Review, a TestFlight external tester, or ad-hoc QA — none with a knowable user id in
+        // advance) can never be farmed for real value.
+        if (isProductionDeployment) {
+            val testTierGrants = sandboxTestTierGrants(subscriber, userId)
+            if (testTierGrants.isNotEmpty()) {
+                val inserted = gateway.grantTopUps(userId, "SANDBOX", testTierGrants)
+                if (inserted > 0) {
+                    log.info("[COACH-RC] sandbox_test_tier_granted userId={} newPacks={}", userId, inserted)
+                }
+            }
+        }
     }
 
     /**
-     * Known coach credit packs from the subscriber's consumables. Environment-gated: sandbox
-     * purchases only grant when syncing SANDBOX (and vice versa), mirroring how entitlements
-     * carry `revenuecat_environment`. Unknown consumable product ids are skipped — they may
-     * be future non-coach products.
+     * Known coach credit packs from the subscriber's consumables. Gated on the *deployment*
+     * ([isProductionDeployment]), never the per-call `environment` string (that string is
+     * event-driven on the webhook path and deployment-driven on the pull path — conflating them
+     * let a delivered sandbox webhook full-grant on prod). PRODUCTION only full-grants genuinely
+     * non-sandbox purchases here; any other deployment (dev/staging) full-grants the sandbox
+     * purchases it's expected to only ever see. A sandbox purchase reaching PRODUCTION is instead
+     * handled by [sandboxTestTierGrants]. Unknown consumable product ids are skipped — they may be
+     * future non-coach products.
      */
-    private fun mapTopUpGrants(subscriber: RevenueCatSubscriber, environment: String): List<TopUpGrantItem> {
-        val sandboxSync = environment == "SANDBOX"
+    private fun mapTopUpGrants(subscriber: RevenueCatSubscriber): List<TopUpGrantItem> {
         return subscriber.nonSubscriptions.flatMap { (productId, purchases) ->
             val credits = CoachModels.TOPUP_PRODUCT_CREDITS[productId]
             if (credits == null) {
@@ -159,7 +185,7 @@ class RevenueCatSyncService(
             }
             purchases.mapNotNull { purchase ->
                 val txnId = purchase.id?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
-                if (purchase.isSandbox != sandboxSync) return@mapNotNull null
+                if (purchase.isSandbox == isProductionDeployment) return@mapNotNull null
                 TopUpGrantItem(
                     rcTransactionId = txnId,
                     productId = productId,
@@ -169,6 +195,39 @@ class RevenueCatSyncService(
                 )
             }
         }
+    }
+
+    /**
+     * Bounded grant for genuine sandbox purchases synced under a PRODUCTION deployment. Capped at
+     * [SANDBOX_TEST_TIER_GRANT_CREDITS] for the user's entire lifetime (across every sandbox
+     * purchase they ever make) — always stored tagged `environment=SANDBOX` regardless of the
+     * deployment's sync environment, both for accounting clarity and because the cap check below
+     * sums exactly that tag.
+     */
+    private suspend fun sandboxTestTierGrants(subscriber: RevenueCatSubscriber, userId: String): List<TopUpGrantItem> {
+        val sandboxPurchases = subscriber.nonSubscriptions.values.flatten()
+            .filter { it.isSandbox }
+            .sortedBy { it.purchaseDate ?: "" }
+        if (sandboxPurchases.isEmpty()) return emptyList()
+
+        var remaining = SANDBOX_TEST_TIER_GRANT_CREDITS - gateway.sandboxTopupCreditsGranted(userId)
+        if (remaining <= 0) return emptyList()
+
+        val grants = mutableListOf<TopUpGrantItem>()
+        for (purchase in sandboxPurchases) {
+            if (remaining <= 0) break
+            val txnId = purchase.id?.takeIf { it.isNotBlank() } ?: continue
+            val credits = minOf(SANDBOX_TEST_TIER_GRANT_CREDITS, remaining)
+            grants += TopUpGrantItem(
+                rcTransactionId = txnId,
+                productId = "sandbox_test_tier",
+                store = purchase.store,
+                credits = credits,
+                purchasedAt = purchase.purchaseDate,
+            )
+            remaining -= credits
+        }
+        return grants
     }
 
     /** Resolve every UUID-shaped candidate against `auth.users`; transient lookup errors throw. */
@@ -250,5 +309,12 @@ class RevenueCatSyncService(
     private companion object {
         val UUID_REGEX =
             Regex("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+
+        /**
+         * Lifetime cap (across every sandbox purchase) for the bounded sandbox test-tier grant on a
+         * PRODUCTION deployment. ~2% of the monthly credit cap (2.2M) — enough Lite turns to prove
+         * the purchase unlocked something, negligible as an abuse vector. Tune via code review + deploy.
+         */
+        const val SANDBOX_TEST_TIER_GRANT_CREDITS = 50_000L
     }
 }
