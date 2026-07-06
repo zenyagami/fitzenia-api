@@ -91,12 +91,15 @@ private val classifier = HardBlockClassifier()
 // ~20k token input cap (heuristic: 4 chars/token)
 private const val INPUT_CHAR_CAP = 80_000
 private const val STREAM_TIMEOUT_MS = 120_000L
-// Cloud Run's front-end can report the connection to the instance as errored (client-visible
-// 503) on a long-lived SSE response that goes silent for too long — observed on turns doing
-// history compaction + a Pro escalation retry, where no real event is written for 10s of
-// seconds while Gemini streams are in flight. A periodic comment-only ping (SSE spec: lines
-// starting with ":" are ignored by EventSource clients) keeps bytes flowing on the connection.
-private const val SSE_PING_INTERVAL_MS = 15_000L
+// The whole turn is buffered (the real `token` event is only emitted after generation
+// completes), so an existing-chat send writes NO bytes for the full turn — RAG embed + a
+// Gemini stream + a possible Pro escalation (a second full pass). Ktor's Netty engine closes
+// the socket if the response goes unwritten for `responseWriteTimeoutSeconds` (default 10s),
+// which Cloud Run surfaces to the client as a 503 "connection to the instance had an error".
+// A periodic comment-only ping (SSE spec: lines starting with ":" are ignored by EventSource
+// clients) keeps bytes flowing. MUST be < the write timeout, and the first ping is sent
+// immediately (see pingJob) so the connection never goes silent from t=0.
+private const val SSE_PING_INTERVAL_MS = 5_000L
 // Flat token estimate for the system prompt + tool descriptions + KB envelope,
 // added to the (chars/4) estimate of the message + history when reserving budget.
 // Over-reserving is safe — reconcile corrects to actuals at turn-end.
@@ -300,21 +303,58 @@ private suspend fun processMessage(
 
             coroutineScope {
                 val pingJob = launch {
+                    // Ping first, THEN delay — flushes the response headers + a keepalive byte at
+                    // t≈0 so the connection is never silent long enough to hit the write timeout,
+                    // even before the pre-stream work (history, RAG, first LLM byte) produces output.
                     while (isActive) {
-                        delay(SSE_PING_INTERVAL_MS)
                         runCatching { sseWriteMutex.withLock { channel.rawSendPing() } }
+                        delay(SSE_PING_INTERVAL_MS)
                     }
                 }
 
             // Budget reservation lifecycle: settle each reservation exactly once.
             var reservationId: String? = null
             var budgetSettled = false
+            // Set once the user's turn row is persisted (see below); declared here — rather than
+            // inside the try block — so both the try body and the catch clause can roll it back.
+            var userMsgRow: com.zenthek.coach.persistence.MessageRow? = null
+            // Flipped true only once the assistant's reply is durably persisted. Guards a narrow
+            // race: `done` can still throw (client disconnects at that exact instant) AFTER the
+            // reply row is written — in that case the turn genuinely completed and must NOT be
+            // rolled back, or a real answer would be orphaned with its question deleted out from
+            // under it.
+            var assistantPersisted = false
+            // Set only when THIS request creates a brand-new chat (chatIdFromPath == null). If the
+            // first turn then fails, the chat is a childless container that never should have
+            // survived — rolled back alongside the message, below.
+            var createdNewChatId: String? = null
+            // Deletes the just-persisted user row (and, for a brand-new chat, the now-childless
+            // chat container) on a turn failure (budget/LLM/stream) so the server never holds an
+            // unanswered user message: a client re-pull would otherwise content-match it as
+            // "delivered" and silently resurrect a locally-FAILED bubble as sent, with no reply and
+            // no way to retry.
+            suspend fun rollbackUserMessage() {
+                if (assistantPersisted) return
+                userMsgRow?.let { row ->
+                    runCatching { chatGateway.deleteMessage(row.id, user.userId) }
+                        .onFailure { e ->
+                            log.warn("[COACH] user_msg_rollback_failed chatId={}", chatIdFromPath, e)
+                        }
+                }
+                createdNewChatId?.let { newChatId ->
+                    runCatching { chatGateway.deleteChat(newChatId, user.userId) }
+                        .onFailure { e ->
+                            log.warn("[COACH] new_chat_rollback_failed chatId={}", newChatId, e)
+                        }
+                }
+            }
             try {
                 // Lazy chat creation — emit chat_created before persisting the first message
                 val chatId: String
                 if (chatIdFromPath == null) {
                     val chatRow = chatGateway.createChat(user.userId, body.locale)
                     chatId = chatRow.id
+                    createdNewChatId = chatId
                     sendSseEventGuarded(
                         "chat_created",
                         sseJson.encodeToString(
@@ -342,8 +382,12 @@ private suspend fun processMessage(
                     .let { Pair(it.history, it.summaryContext) }
 
                 // Persist the raw user message — non-fatal so the LLM turn still runs on save failure.
-                runCatching { chatGateway.insertMessage(chatId, user.userId, "user", content, requestId) }
+                // The row id is kept (see [userMsgRow] above) so a subsequent turn failure can roll
+                // it back via rollbackUserMessage() instead of leaving an unanswered user row
+                // server-side.
+                userMsgRow = runCatching { chatGateway.insertMessage(chatId, user.userId, "user", content, requestId) }
                     .onFailure { e -> log.warn("[COACH] user_msg_persist_failed chatId={}", chatId, e) }
+                    .getOrNull()
 
                 // Input sanitization.
                 val sanitized = InputSanitizer.sanitize(content)
@@ -461,6 +505,7 @@ private suspend fun processMessage(
                             )
                         )
                     )
+                    rollbackUserMessage()
                     return@coroutineScope
                 }
                 reservationId = reserveResult?.reservationId
@@ -862,9 +907,10 @@ private suspend fun processMessage(
                         citations = citationsJson,
                         escalated = escalated,
                     ).id
-                }.onFailure { e ->
-                    log.error("[COACH] assistant_persist_failed chatId={}", chatId, e)
-                }.getOrElse { java.util.UUID.randomUUID().toString() }
+                }.onSuccess { assistantPersisted = true }
+                    .onFailure { e ->
+                        log.error("[COACH] assistant_persist_failed chatId={}", chatId, e)
+                    }.getOrElse { java.util.UUID.randomUUID().toString() }
 
                 sendSseEventGuarded(
                     "done",
@@ -924,6 +970,10 @@ private suspend fun processMessage(
                     inFlight.remove(flightKey)
                     lockReleased = true
                 }
+                // Every throw point above the `done` event is wrapped in its own runCatching, so
+                // reaching here always means the turn failed before an assistant reply completed —
+                // safe to roll back the user row unconditionally (including client disconnects).
+                rollbackUserMessage()
                 if (e is ClosedWriteChannelException) {
                     // Client closed the SSE connection — expected, not an error.
                     log.debug("[COACH] SSE client disconnected userId={}", user.userId)

@@ -264,6 +264,39 @@ class ChatGateway(
         }
     }
 
+    /**
+     * Deletes a single message. Used to roll back the user's turn row when the turn fails after
+     * it was persisted but before an assistant reply completes — otherwise a lone unanswered user
+     * row survives server-side and a client re-pull mistakes it for a delivered message.
+     */
+    suspend fun deleteMessage(messageId: String, userId: String) {
+        val response = httpClient.delete(
+            "$supabaseUrl/rest/v1/coach_message?id=eq.$messageId&user_id=eq.$userId"
+        ) {
+            serviceRoleHeaders()
+        }
+        if (!response.status.isSuccess()) {
+            log.error("[COACH-PERSIST] deleteMessage failed messageId={} status={}", messageId, response.status)
+        }
+    }
+
+    /**
+     * Hard-deletes a chat row outright (no archive tombstone). Used only to clean up a chat
+     * created moments earlier in the SAME request whose first (and only) message turn then
+     * failed and was rolled back — a childless container that should never have survived, not a
+     * user's real chat history (which goes through [archiveChat] + [deleteChatMessages] instead).
+     */
+    suspend fun deleteChat(chatId: String, userId: String) {
+        val response = httpClient.delete(
+            "$supabaseUrl/rest/v1/coach_chat?id=eq.$chatId&user_id=eq.$userId"
+        ) {
+            serviceRoleHeaders()
+        }
+        if (!response.status.isSuccess()) {
+            log.error("[COACH-PERSIST] deleteChat failed chatId={} status={}", chatId, response.status)
+        }
+    }
+
     suspend fun getMessages(chatId: String, limit: Int = 50): List<HistoryMessageRow> {
         val response = httpClient.get(
             "$supabaseUrl/rest/v1/coach_message?chat_id=eq.$chatId&order=created_at.desc&limit=$limit&select=id,role,content,created_at"
