@@ -22,6 +22,8 @@ import java.util.concurrent.ConcurrentHashMap
 enum class CoachPlan(val wire: String) {
     PREMIUM("premium"),
     TRIAL("trial"),
+    /** No active entitlement. Never gates chat — only used to render a zero-usage paywall preview. */
+    FREE("free"),
 }
 
 class PremiumGate(
@@ -43,7 +45,18 @@ class PremiumGate(
      * Gates the call and returns the caller's [CoachPlan] (from the same entitlement
      * lookup — no extra round-trip). Callers that only gate can ignore the return value.
      */
-    suspend fun requirePremium(call: ApplicationCall, entitlementId: String = "premium"): CoachPlan {
+    suspend fun requirePremium(call: ApplicationCall, entitlementId: String = "premium"): CoachPlan =
+        resolvePlan(call, entitlementId) ?: throw ForbiddenException("PREMIUM_REQUIRED")
+
+    /**
+     * Same entitlement resolution as [requirePremium] (including lazy sync-on-miss), but
+     * returns null instead of throwing. For read-only screens the client can reach without
+     * premium (e.g. the usage bars behind a paywall preview) where a 403 would break the UI.
+     */
+    suspend fun planOrNull(call: ApplicationCall, entitlementId: String = "premium"): CoachPlan? =
+        resolvePlan(call, entitlementId)
+
+    private suspend fun resolvePlan(call: ApplicationCall, entitlementId: String): CoachPlan? {
         val userId = call.requireAuthenticatedUser().userId
 
         // Entitlements are driven by RevenueCat → user_entitlement. Fast path: a live active row.
@@ -70,7 +83,7 @@ class PremiumGate(
             }
         }
 
-        throw ForbiddenException("PREMIUM_REQUIRED")
+        return null
     }
 
     private fun isNegativeCached(userId: String): Boolean {

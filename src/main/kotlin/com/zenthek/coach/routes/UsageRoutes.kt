@@ -70,9 +70,12 @@ fun Application.configureUsageRouting(
     routing {
         authenticate(SUPABASE_AUTH_PROVIDER) {
             rateLimit(RateLimitName(RateLimitNames.COACH_MANAGEMENT)) {
+                // No premium gate: the client shows this screen as a paywall preview before
+                // purchase, so a non-entitled caller gets a zero-used/premium-cap preview
+                // (CoachPlan.FREE) instead of a 403 that would break the usage bars.
                 get("/api/coach/usage") {
-                    val plan = premiumGate.requirePremium(call)
                     val user = call.requireAuthenticatedUser()
+                    val plan = premiumGate.planOrNull(call) ?: CoachPlan.FREE
                     val period = BudgetPeriod.currentYyyymm()
                     val usage = budgetGateway.usage(user.userId, period)
                     call.respond(HttpStatusCode.OK, buildUsageResponse(plan, period, usage))
@@ -110,8 +113,10 @@ fun Application.configureUsageRouting(
                         )
                         return@post
                     }
-                    // requirePremium re-reads the just-synced entitlement (grants already persisted).
-                    val plan = premiumGate.requirePremium(call)
+                    // Re-reads the just-synced entitlement (grants already persisted). Still not
+                    // premium-gated — a caller who genuinely has no purchase to restore gets the
+                    // same zero-used/premium-cap preview as GET /api/coach/usage, not a 403.
+                    val plan = premiumGate.planOrNull(call) ?: CoachPlan.FREE
                     val period = BudgetPeriod.currentYyyymm()
                     val usage = budgetGateway.usage(user.userId, period)
                     call.respond(HttpStatusCode.OK, buildUsageResponse(plan, period, usage))
