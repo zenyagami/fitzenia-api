@@ -198,8 +198,9 @@ class RevenueCatSyncService(
     }
 
     /**
-     * Bounded grant for genuine sandbox purchases synced under a PRODUCTION deployment. Capped at
-     * [SANDBOX_TEST_TIER_GRANT_CREDITS] for the user's entire lifetime (across every sandbox
+     * Bounded grant for genuine sandbox purchases synced under a PRODUCTION deployment. Grants
+     * [SANDBOX_TEST_TIER_GRANT_CREDITS] per sandbox purchase up to
+     * [SANDBOX_TEST_TIER_LIFETIME_CAP_CREDITS] across the user's entire lifetime (every sandbox
      * purchase they ever make) — always stored tagged `environment=SANDBOX` regardless of the
      * deployment's sync environment, both for accounting clarity and because the cap check below
      * sums exactly that tag.
@@ -210,7 +211,7 @@ class RevenueCatSyncService(
             .sortedBy { it.purchaseDate ?: "" }
         if (sandboxPurchases.isEmpty()) return emptyList()
 
-        var remaining = SANDBOX_TEST_TIER_GRANT_CREDITS - gateway.sandboxTopupCreditsGranted(userId)
+        var remaining = SANDBOX_TEST_TIER_LIFETIME_CAP_CREDITS - gateway.sandboxTopupCreditsGranted(userId)
         if (remaining <= 0) return emptyList()
 
         val grants = mutableListOf<TopUpGrantItem>()
@@ -311,10 +312,21 @@ class RevenueCatSyncService(
             Regex("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 
         /**
-         * Lifetime cap (across every sandbox purchase) for the bounded sandbox test-tier grant on a
-         * PRODUCTION deployment. ~2% of the monthly credit cap (2.2M) — enough Lite turns to prove
-         * the purchase unlocked something, negligible as an abuse vector. Tune via code review + deploy.
+         * Credits granted per individual sandbox purchase on a PRODUCTION deployment (~3 Lite turns).
+         * Small on purpose: enough for App Review / TestFlight / QA to see a purchase visibly deliver
+         * value, negligible on its own as an abuse vector.
          */
         const val SANDBOX_TEST_TIER_GRANT_CREDITS = 50_000L
+
+        /**
+         * Lifetime cap (across every sandbox purchase a user ever makes) for the bounded sandbox
+         * test-tier grant on a PRODUCTION deployment. Kept above [SANDBOX_TEST_TIER_GRANT_CREDITS] so
+         * that a reviewer's *repeat* sandbox purchases each keep delivering (~6 purchases × ~3 turns) —
+         * App Review commonly buys a consumable more than once, and a second purchase silently
+         * granting nothing reads as "paid, got nothing" and fails review. Still ~14% of the monthly
+         * cap (2.2M) total and sandbox-only, so it's negligible as an abuse vector. Tune via code
+         * review + deploy.
+         */
+        const val SANDBOX_TEST_TIER_LIFETIME_CAP_CREDITS = 300_000L
     }
 }
