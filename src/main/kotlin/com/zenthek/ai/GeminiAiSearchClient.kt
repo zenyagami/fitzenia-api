@@ -178,7 +178,11 @@ class GeminiAiSearchClient(
             - All macros must be non-negative. Calories must be consistent with macros: calories ≈ 4*protein + 4*carbs + 9*fat (within 20%).
             - ALWAYS populate fiber_g, sodium_mg, sugar_g, saturated_fat_g, cholesterol_mg, potassium_mg, calcium_mg, and iron_mg on the 100g serving. These are standard nutrition-label fields. Estimate from upstream hits when available, otherwise use typical values for this food category. Only leave them null if you have strong reason to believe the food genuinely lacks that nutrient AND no reasonable estimate exists (rare — e.g. pure oils have 0g protein/carbs/fiber/sugar, not null).
             - Use 0.0 (not null) when a nutrient is meaningfully absent (e.g. sugar_g=0 for pure olive oil). Reserve null for "genuinely unknown and not estimable".
-            - "name" must be in the target locale language. If locale is ja-JP write the name in Japanese, etc.
+            - "name" MUST be written in the language named by the LANGUAGE SUBTAG of `locale` — the part BEFORE the hyphen. The region subtag (after the hyphen) and the `country` field select which foods are regionally relevant; they NEVER select the naming language. When language and region disagree, the LANGUAGE SUBTAG always wins.
+                * locale "en-DE" → subtag "en" → write ENGLISH, not German — regardless of whether country is "DE", "PL", or anything else.
+                * locale "en-PL" → ENGLISH. locale "de-DE" → German. locale "pl-PL" → Polish. locale "ja-JP" → Japanese. locale "es-MX" → Spanish.
+            - The upstream `hits` are often in a DIFFERENT language than the target (a search made from Poland returns Polish product names). Ground MACROS on the hits, but NEVER copy a hit's name verbatim when it is in another language — translate the food concept into the target language instead.
+                * query "peach", locale "en-DE", country "PL", hits named "Brzoskwinia" → name MUST be "Peach", NOT "Brzoskwinia".
             - If one of the equivalent_candidates is clearly the same conceptual food (e.g. "cheesecake" ≈ "チーズケーキ"), set link_to_canonical_food_id to its canonical_food_id. Otherwise set it to null. Regional variants ("pancake" US vs UK, "biscuit" US vs UK) are NOT equivalent.
             - confidence is 0.0-1.0 per item; be conservative for exotic/regional foods with thin grounding.
 
