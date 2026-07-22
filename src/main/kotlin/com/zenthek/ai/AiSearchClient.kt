@@ -84,7 +84,14 @@ data class EquivalentCandidateHint(
 @Serializable
 data class AiGenerateInput(
     @SerialName("normalized_query") val normalizedQuery: String,
-    val locale: String,
+    /**
+     * ISO 639 language code with the region subtag stripped ("en-DE" -> "en").
+     * Drives the output name language, and is deliberately NOT the full locale:
+     * passing "en-DE" made the model read the region as the language and name
+     * foods in German (or Polish, following the country) under an English tag.
+     * Regional relevance is carried by [country] instead.
+     */
+    val language: String,
     val country: String,
     /** Broad means produce 2-3 variants; specific means produce exactly 1. */
     @SerialName("broad") val broad: Boolean,

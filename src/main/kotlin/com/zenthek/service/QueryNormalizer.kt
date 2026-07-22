@@ -11,14 +11,16 @@ import java.text.Normalizer
  *  - Lowercase (Locale-insensitive — enough for catalog keying; LLM handles locale naming).
  *  - Trim, collapse runs of whitespace to single space.
  *
- * Tokenization splits on any non-letter/non-digit. Simple plural stemming
- * ("bananas" ≈ "banana") is applied only in the heuristic match — not in
- * normalization itself (so the catalog key stays stable).
+ * Tokenization splits on any non-letter/non-digit, then folds accents
+ * ("żurek" ≈ "zurek", "käsespätzle" ≈ "kasespatzle"). Accent folding and simple
+ * plural stemming ("bananas" ≈ "banana") apply only in the heuristic match —
+ * never in normalization itself, so the catalog key stays stable.
  */
 object QueryNormalizer {
 
     private val whitespace = Regex("\\s+")
     private val nonAlphaNum = Regex("[^\\p{L}\\p{N}]+")
+    private val combiningMarks = Regex("\\p{Mn}+")
 
     fun normalize(raw: String): String {
         val nfkc = Normalizer.normalize(raw, Normalizer.Form.NFKC)
@@ -45,10 +47,34 @@ object QueryNormalizer {
     }
 
     fun tokenize(text: String): List<String> {
-        return text.lowercase()
+        return foldDiacritics(text.lowercase())
             .split(nonAlphaNum)
             .filter { it.isNotBlank() }
     }
+
+    /**
+     * Fold accents so a query typed without them still matches the accented name:
+     * "zurek" ≈ "żurek", "kasespatzle" ≈ "käsespätzle", "golabki" ≈ "gołąbki".
+     * Nobody reaches for ż or ä on an English keyboard, and without this the
+     * display-name compatibility guard silently drops those rows on every lookup.
+     *
+     * NFD decomposition + combining-mark removal covers most accented letters, but
+     * several have no canonical decomposition and need an explicit mapping —
+     * Polish ł, German ß, Nordic ø/æ, French œ, Turkish ı, Croatian đ.
+     *
+     * Matching only. [normalize] deliberately does NOT fold: its output is the
+     * catalog key, and folding there would orphan every row already stored.
+     */
+    private fun foldDiacritics(lowercased: String): String =
+        Normalizer.normalize(lowercased, Normalizer.Form.NFD)
+            .replace(combiningMarks, "")
+            .replace('ł', 'l')
+            .replace('ø', 'o')
+            .replace('đ', 'd')
+            .replace('ı', 'i')
+            .replace("ß", "ss")
+            .replace("æ", "ae")
+            .replace("œ", "oe")
 
     /**
      * True if `candidateName`'s tokens contain `normalizedQuery`'s tokens as a

@@ -771,7 +771,10 @@ class SmartSearchOrchestrator internal constructor(
                 ai.generate(
                     AiGenerateInput(
                         normalizedQuery = normalizedQuery,
-                        locale = locale,
+                        // Language only. The full locale ("en-DE") made the model read the
+                        // region as the naming language. The catalog key below still uses
+                        // the full locale — do not collapse it there or buckets merge.
+                        language = localeLanguage(locale) ?: DEFAULT_CATALOG_LANGUAGE,
                         country = country,
                         broad = broad,
                         hits = hits,

@@ -252,8 +252,18 @@ RULES
   `caloriesExact` and `totalCaloriesExact` as precise decimals (never round a positive value to 0).
   Round sodiumMg to the nearest integer and all other macros to one decimal place.
 - If a portion is completely inestimable, omit that item and mention it in "notes".
-- If a locale is provided, return all string fields in that locale's language.
-  Use locally common food names (e.g. "Arroz Branco" for pt-BR, "Riz Blanc" for fr-FR).
+- If a `language` is provided, return all string fields in that language. It is an ISO 639 code:
+  "en" → English, "de" → German, "pl" → Polish, "pt" → Portuguese, "fr" → French.
+  Name each dish as a speaker of that language would, and NEVER switch to the local language of
+  wherever the photo was taken just because the food is regional — a user with language "en"
+  photographing a peach in Poland gets "Peach", never "Brzoskwinia".
+- Endonym exception: culturally specific dishes with no real equivalent in that language KEEP their
+  original name, because that borrowed name IS what a speaker of the language calls them:
+  "Pierogi" (not "Dumplings"), "Żurek" (not "Sour Rye Soup"), "Bigos", "Kotlet Schabowy", "Sushi",
+  "Ramen", "Paella", "Pho", "Croissant". Translating these destroys the dish's identity.
+  Everyday foods and ingredients are always translated ("Peach", "White Rice", "Chicken Breast").
+  For a dish the user likely does not know, append a short gloss in their language —
+  "Żurek (Sour Rye Soup)" — but never output the gloss alone.
 - Every item MUST include servingUnit and servingCount. If truly uncertain, use
   servingUnit="portion" and servingCount=1, and downgrade confidence to "low".
 - Per-item nutrition fields are per-ONE-servingUnit. Exact totals are summed across
@@ -273,7 +283,10 @@ RULES
         locale: String?
     ): String {
         val untrustedHints = buildJsonObject {
-            putIfNotBlank("locale", locale)
+            // Language subtag only ("en-DE" -> "en"). Passing the full locale made the
+            // model read the region as the naming language and return dish names in the
+            // local language instead of the user's. Same fix as AiGenerateInput.language.
+            putIfNotBlank("language", locale?.substringBefore('-')?.substringBefore('_')?.lowercase())
             putIfNotBlank("meal_title", mealTitle)
             putIfNotBlank("additional_context", additionalContext)
         }
