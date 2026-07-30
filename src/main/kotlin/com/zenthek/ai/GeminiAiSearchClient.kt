@@ -176,7 +176,7 @@ class GeminiAiSearchClient(
               Per-unit nutrition values must be scaled correctly from the 100g values (e.g. a 75g kiwi has ~75% of 100g calories), all non-negative.
             - For plain brewed beverages (tea, green tea, black tea, herbal tea, coffee, broth), generate values for the BREWED/PREPARED liquid form (per 100ml ≈ 100g), NOT for dry leaves, powder, concentrate, K-cup pods, or latte mix. Brewed plain tea ≈ 1–2 kcal/100ml, 0.1–0.3g protein, 0.3–0.6g carbs, 0g fat. Brewed plain coffee ≈ 2–5 kcal/100ml. Only use concentrate/powder macros when the query explicitly contains "powder", "mix", "concentrate", "latte mix", or "instant". When upstream branded hits show >50 kcal/100g for a query naming a plain beverage, treat those as dry/concentrate products — prefer GENERIC hits (kind="GENERIC") for macro grounding instead.
             - All macros must be non-negative. Calories must be consistent with macros: calories ≈ 4*protein + 4*carbs + 9*fat (within 20%).
-            - ALWAYS populate fiber_g, sodium_mg, sugar_g, saturated_fat_g, cholesterol_mg, potassium_mg, calcium_mg, and iron_mg on the 100g serving. These are standard nutrition-label fields. Estimate from upstream hits when available, otherwise use typical values for this food category. Only leave them null if you have strong reason to believe the food genuinely lacks that nutrient AND no reasonable estimate exists (rare — e.g. pure oils have 0g protein/carbs/fiber/sugar, not null).
+            - ALWAYS populate fiber_g, sodium_mg, sugar_g, saturated_fat_g, cholesterol_mg, potassium_mg, calcium_mg, and iron_mg on EVERY serving — the 100g serving AND each household serving (scale household values by weight from the 100g serving, exactly like the macros). These are standard nutrition-label fields. Estimate from upstream hits when available, otherwise use typical values for this food category. Only leave them null if you have strong reason to believe the food genuinely lacks that nutrient AND no reasonable estimate exists (rare — e.g. pure oils have 0g protein/carbs/fiber/sugar, not null).
             - Use 0.0 (not null) when a nutrient is meaningfully absent (e.g. sugar_g=0 for pure olive oil). Reserve null for "genuinely unknown and not estimable".
             - "name" MUST be written in the language given by the `language` field, an ISO 639 code: "en" → English, "de" → German, "pl" → Polish, "ja" → Japanese, "es" → Spanish. The `country` field selects which foods are regionally relevant; it NEVER selects the naming language. A user in country "PL" with language "en" gets ENGLISH names.
             - The upstream `hits` are often in a DIFFERENT language than `language` (a search made from Poland returns Polish product names). Ground MACROS on the hits, but NEVER copy a hit's name verbatim when it is in another language — translate the food concept into the target language instead.
@@ -257,7 +257,8 @@ class GeminiAiSearchClient(
             putJsonObject("protein_g") { put("type", "number") }
             putJsonObject("carbs_g") { put("type", "number") }
             putJsonObject("fat_g") { put("type", "number") }
-            // Optional fields — declared but not required (prompt pushes LLM to populate them anyway)
+            // Nullable but required below — the model must emit each key on every
+            // serving; null is reserved for "genuinely unknown and not estimable".
             putJsonObject("fiber_g") { putJsonArray("type") { add("number"); add("null") } }
             putJsonObject("sodium_mg") { putJsonArray("type") { add("number"); add("null") } }
             putJsonObject("sugar_g") { putJsonArray("type") { add("number"); add("null") } }
@@ -274,6 +275,14 @@ class GeminiAiSearchClient(
             add("protein_g")
             add("carbs_g")
             add("fat_g")
+            add("fiber_g")
+            add("sodium_mg")
+            add("sugar_g")
+            add("saturated_fat_g")
+            add("cholesterol_mg")
+            add("potassium_mg")
+            add("calcium_mg")
+            add("iron_mg")
         }
     }
 }

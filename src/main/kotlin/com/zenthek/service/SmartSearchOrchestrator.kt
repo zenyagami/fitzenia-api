@@ -40,6 +40,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.abs
+import kotlin.math.round
 import org.slf4j.LoggerFactory
 
 /**
@@ -792,9 +793,14 @@ class SmartSearchOrchestrator internal constructor(
         log.debug("[SMART] ai_generated NLP food from {} -> response={}",generated.items, config.aiGenerateModel)
         if (generated.items.isEmpty()) return AiOutcome.UpstreamOnly
 
+        // Micros are only guaranteed on the 100g reference serving; household
+        // servings may arrive with them null. Derive the gaps before validation
+        // so both the response and the persisted rows carry complete servings.
+        val items = generated.items.map { it.withMicrosDerivedFromReference() }
+
         // Server-side nutrition validation. Items that fail are returned to the
         // client (with aiGenerated=true) but NOT persisted.
-        val itemsWithValidity = generated.items.map { it to NutritionValidator.validate(it) }
+        val itemsWithValidity = items.map { it to NutritionValidator.validate(it) }
         val validItems = itemsWithValidity.filter { it.second is NutritionValidator.Result.Valid }.map { it.first }
         if (validItems.size < itemsWithValidity.size) {
             val invalid = itemsWithValidity.filter { it.second is NutritionValidator.Result.Invalid }
@@ -857,7 +863,7 @@ class SmartSearchOrchestrator internal constructor(
                         locale,
                         country
                     )
-                    generated.items.map { item ->
+                    items.map { item ->
                         item.toFoodItem(
                             canonicalId = null,
                             canonicalGroupId = null
@@ -865,13 +871,13 @@ class SmartSearchOrchestrator internal constructor(
                     }
                 }
             }
-            is CatalogPersistResult.Inserted -> generated.items.mapIndexed { idx, item ->
+            is CatalogPersistResult.Inserted -> items.mapIndexed { idx, item ->
                 item.toFoodItem(
                     canonicalId = persistResult.rankToCanonicalId[idx.toShort()],
                     canonicalGroupId = null
                 )
             }
-            CatalogPersistResult.Skipped -> generated.items.map { it.toFoodItem(canonicalId = null, canonicalGroupId = null) }
+            CatalogPersistResult.Skipped -> items.map { it.toFoodItem(canonicalId = null, canonicalGroupId = null) }
         }
 
         if (assembledItems.isEmpty()) return AiOutcome.UpstreamOnly
@@ -1125,6 +1131,32 @@ class SmartSearchOrchestrator internal constructor(
             confidence = confidence,
             canonicalGroupId = canonicalGroupId
         )
+    }
+
+    // A canonical food's per-gram composition is uniform, so a micro missing on
+    // a household serving is exactly the 100g value scaled by weight. Filled
+    // servings keep whatever the model did emit; only nulls are derived.
+    private fun AiGeneratedItem.withMicrosDerivedFromReference(): AiGeneratedItem {
+        val ref = servings.firstOrNull {
+            it.name.trim().equals("100g", ignoreCase = true) || it.weightGrams in 99f..101f
+        } ?: return this
+        if (ref.weightGrams <= 0f) return this
+        return copy(servings = servings.map { s ->
+            if (s === ref || s.weightGrams <= 0f) return@map s
+            val factor = s.weightGrams / ref.weightGrams
+            fun derive(own: Float?, reference: Float?): Float? =
+                own ?: reference?.let { round(it * factor * 10f) / 10f }
+            s.copy(
+                fiberG = derive(s.fiberG, ref.fiberG),
+                sodiumMg = derive(s.sodiumMg, ref.sodiumMg),
+                sugarG = derive(s.sugarG, ref.sugarG),
+                saturatedFatG = derive(s.saturatedFatG, ref.saturatedFatG),
+                cholesterolMg = derive(s.cholesterolMg, ref.cholesterolMg),
+                potassiumMg = derive(s.potassiumMg, ref.potassiumMg),
+                calciumMg = derive(s.calciumMg, ref.calciumMg),
+                ironMg = derive(s.ironMg, ref.ironMg)
+            )
+        })
     }
 
     // -----------------------------------------------------------------------
