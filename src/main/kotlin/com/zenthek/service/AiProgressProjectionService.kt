@@ -440,6 +440,12 @@ class AiProgressProjectionService(
                 currentWeightKg = resolved.currentWeightKg,
                 targetBodyFatPercent = projectedBf,
                 targetWeightKg = projectedWeight,
+                // v2+ uses the stage position and the ladder end state to bound how much
+                // change may be visible in this frame. v1 ignores these.
+                stepIndex = stepIndex,
+                numRungs = numRungs,
+                finalBodyFatPercent = resolved.targetBodyFatPercent,
+                finalWeightKg = resolved.targetWeightKg,
             ),
         )
         val sourceFilename = if (mimeType.contains("png", ignoreCase = true)) "source.png" else "source.jpg"

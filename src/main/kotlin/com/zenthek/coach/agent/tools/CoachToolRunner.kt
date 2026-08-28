@@ -9,6 +9,7 @@ import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.http.isSuccess
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -61,6 +62,13 @@ class CoachToolRunner(
                 date = args["date"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
                     ?: userLocalDate.format(ISO_DATE)
             )
+            "searchDiary"        -> searchDiary(
+                query = args["query"]?.jsonPrimitive?.content ?: "",
+                days  = args["days"]?.jsonPrimitive?.content?.toIntOrNull() ?: 365,
+                limit = args["limit"]?.jsonPrimitive?.content?.toIntOrNull() ?: 50,
+            )
+            "getBodyMeasurements" -> getBodyMeasurements(days = args["days"]?.jsonPrimitive?.content?.toIntOrNull() ?: 180)
+            "getPastPhases"      -> getPastPhases(limit = args["limit"]?.jsonPrimitive?.content?.toIntOrNull() ?: 5)
             "searchKnowledgeBase" -> searchKnowledgeBase(
                 query    = args["query"]?.jsonPrimitive?.content ?: "",
                 sections = args["sections"]?.jsonPrimitive?.content,
@@ -255,6 +263,165 @@ class CoachToolRunner(
         )
         return if (raw.trim() == "[]") """{"date":"$date","entries":[],"count":0}""" else raw
     }
+
+    /**
+     * Free-text search across the user's whole diary history.
+     *
+     * Matches BOTH `food_name_snapshot` and `my_meal_name_snapshot`: a saved My Meal is not
+     * guaranteed to mirror its name into the food column on every client version, so a
+     * single-column ILIKE would silently miss those rows.
+     *
+     * The query is reduced to letter/digit/hyphen tokens and rejoined with the PostgREST
+     * `ilike` wildcard (`*`). That keeps the filter free of the `,` `.` `(` `)` characters
+     * that would break `or=(...)` syntax, and free of raw spaces that would need escaping.
+     * Multi-word queries therefore match in order: "chicken broccoli" also finds
+     * "chicken and broccoli", but not "broccoli chicken".
+     */
+    private suspend fun searchDiary(query: String, days: Int, limit: Int): String {
+        val tokens = query.split(Regex("""[^\p{L}\p{N}-]+""")).filter { it.isNotBlank() }
+        if (tokens.isEmpty()) return """{"error":"query_empty"}"""
+        val pattern = tokens.joinToString(separator = "*", prefix = "*", postfix = "*")
+
+        val safeDays  = days.coerceIn(1, 3650)
+        val safeLimit = limit.coerceIn(1, 100)
+        val start = userLocalDate.minusDays(safeDays.toLong()).format(ISO_DATE)
+        val end   = userLocalDate.format(ISO_DATE)
+
+        val rows = postgrestGetArray(
+            "diary_entry",
+            "select=date,meal_type,food_name_snapshot,my_meal_name_snapshot," +
+                "calories_kcal,protein_g,carbs_g,fat_g" +
+                "&date=gte.$start&date=lte.$end" +
+                "&or=(food_name_snapshot.ilike.$pattern,my_meal_name_snapshot.ilike.$pattern)" +
+                "&order=date.desc&limit=$safeLimit",
+        )
+
+        return json.encodeToString(JsonObject.serializer(), buildJsonObject {
+            put("query", query)
+            put("period_days", safeDays)
+            put("count", rows.size)
+            put("last_eaten_on", rows.firstOrNull()?.str("date")?.let { JsonPrimitive(it) } ?: JsonNull)
+            putJsonArray("matches") {
+                rows.forEach { row ->
+                    addJsonObject {
+                        put("date", row.str("date")?.let { JsonPrimitive(it) } ?: JsonNull)
+                        put("meal", prettyEnum(row.str("meal_type")))
+                        put("name", (row.str("my_meal_name_snapshot") ?: row.str("food_name_snapshot"))
+                            ?.let { JsonPrimitive(it) } ?: JsonNull)
+                        put("kcal", row.num("calories_kcal")?.let { JsonPrimitive(it.toInt()) } ?: JsonNull)
+                        put("protein_g", row.num("protein_g")?.let { JsonPrimitive(it.toInt()) } ?: JsonNull)
+                        put("carbs_g",   row.num("carbs_g")?.let { JsonPrimitive(it.toInt()) } ?: JsonNull)
+                        put("fat_g",     row.num("fat_g")?.let { JsonPrimitive(it.toInt()) } ?: JsonNull)
+                    }
+                }
+            }
+        })
+    }
+
+    /** Latest / earliest / delta per circumference metric over the window. */
+    private suspend fun getBodyMeasurements(days: Int): String {
+        val safeDays = days.coerceIn(1, 3650)
+        val start = userLocalDate.minusDays(safeDays.toLong()).format(ISO_DATE)
+        val end   = userLocalDate.format(ISO_DATE)
+
+        val byMetric = postgrestGetArray(
+            "body_measurement",
+            "select=date,metric,value_cm&is_deleted=eq.false&date=gte.$start&date=lte.$end&order=date.asc",
+        ).mapNotNull { row ->
+            val metric = row.str("metric") ?: return@mapNotNull null
+            val date   = row.str("date") ?: return@mapNotNull null
+            val value  = row.num("value_cm") ?: return@mapNotNull null
+            Triple(metric, date, value)
+        }.groupBy { it.first }
+
+        if (byMetric.isEmpty()) return """{"period_days":$safeDays,"metrics":[],"count":0}"""
+
+        return json.encodeToString(JsonObject.serializer(), buildJsonObject {
+            put("period_days", safeDays)
+            put("count", byMetric.size)
+            putJsonArray("metrics") {
+                byMetric.forEach { (metric, entries) ->
+                    val sorted = entries.sortedBy { it.second }
+                    val first = sorted.first()
+                    val last  = sorted.last()
+                    addJsonObject {
+                        put("metric",      metric.lowercase().replace('_', ' '))
+                        put("latest_cm",   last.third)
+                        put("latest_date", last.second)
+                        put("first_cm",    first.third)
+                        put("first_date",  first.second)
+                        put("change_cm",   Math.round((last.third - first.third) * 10) / 10.0)
+                        put("entries",     sorted.size)
+                    }
+                }
+            }
+        })
+    }
+
+    /** Completed journeys, newest-first, with duration and rate derived server-side. */
+    private suspend fun getPastPhases(limit: Int): String {
+        val safeLimit = limit.coerceIn(1, 20)
+        val rows = postgrestGetArray(
+            "journey",
+            "select=target_phase,goal_direction,pace_tier,started_at,ended_at," +
+                "start_weight_kg,end_weight_kg,start_body_fat_percent,end_body_fat_percent" +
+                "&ended_at=not.is.null&is_deleted=eq.false&order=ended_at.desc&limit=$safeLimit",
+        )
+        if (rows.isEmpty()) return """{"phases":[],"count":0}"""
+
+        return json.encodeToString(JsonObject.serializer(), buildJsonObject {
+            put("count", rows.size)
+            putJsonArray("phases") {
+                rows.forEach { row ->
+                    val startedAt = row.str("started_at")
+                    val endedAt   = row.str("ended_at")
+                    val weeks: Double? = if (startedAt != null && endedAt != null) {
+                        runCatching {
+                            val d = ChronoUnit.DAYS.between(
+                                LocalDate.parse(startedAt.take(10), ISO_DATE),
+                                LocalDate.parse(endedAt.take(10), ISO_DATE),
+                            )
+                            Math.round(d / 7.0 * 10) / 10.0
+                        }.getOrNull()
+                    } else null
+                    val startW = row.num("start_weight_kg")
+                    val endW   = row.num("end_weight_kg")
+                    val deltaW = if (startW != null && endW != null) {
+                        Math.round((endW - startW) * 10) / 10.0
+                    } else null
+
+                    addJsonObject {
+                        put("target_phase",   prettyEnum(row.str("target_phase")))
+                        put("goal_direction", prettyEnum(row.str("goal_direction")))
+                        put("pace_tier",      prettyEnum(row.str("pace_tier")))
+                        put("started_at",     startedAt?.take(10)?.let { JsonPrimitive(it) } ?: JsonNull)
+                        put("ended_at",       endedAt?.take(10)?.let { JsonPrimitive(it) } ?: JsonNull)
+                        put("duration_weeks", weeks?.let { JsonPrimitive(it) } ?: JsonNull)
+                        put("start_weight_kg",   startW?.let { JsonPrimitive(it) } ?: JsonNull)
+                        put("end_weight_kg",     endW?.let { JsonPrimitive(it) } ?: JsonNull)
+                        put("weight_change_kg",  deltaW?.let { JsonPrimitive(it) } ?: JsonNull)
+                        put(
+                            "kg_per_week",
+                            if (deltaW != null && weeks != null && weeks > 0.0) {
+                                JsonPrimitive(Math.round(deltaW / weeks * 100) / 100.0)
+                            } else JsonNull,
+                        )
+                        put("start_body_fat_percent", row.num("start_body_fat_percent")?.let { JsonPrimitive(it) } ?: JsonNull)
+                        put("end_body_fat_percent",   row.num("end_body_fat_percent")?.let { JsonPrimitive(it) } ?: JsonNull)
+                    }
+                }
+            }
+        })
+    }
+
+    /** `MORNING_SNACK` -> `morning snack`; the prompt forbids echoing raw enum values. */
+    private fun prettyEnum(raw: String?): JsonElement =
+        raw?.lowercase()?.replace('_', ' ')?.let { JsonPrimitive(it) } ?: JsonNull
+
+    private fun JsonObject.str(key: String): String? =
+        (this[key] as? JsonPrimitive)?.takeIf { it !is JsonNull }?.content
+
+    private fun JsonObject.num(key: String): Double? = str(key)?.toDoubleOrNull()
 
     private suspend fun searchKnowledgeBase(query: String, sections: String?): String {
         if (query.isBlank()) return """{"chunks":[]}"""

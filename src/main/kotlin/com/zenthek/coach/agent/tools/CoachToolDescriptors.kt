@@ -92,6 +92,51 @@ object CoachToolDescriptors {
             ),
         ),
         ToolDescriptor(
+            name = "searchDiary",
+            description = "Searches the user's ENTIRE food diary history by food or meal name and returns every match newest-first with the date it was logged. Use this for any \"when did I / how often do I / when did I last eat X\" question. Never guess dates one at a time with getDiaryForDate — search here instead, then use getDiaryForDate only if the user asks what else they ate on a specific day.",
+            requiredParameters = listOf(
+                ToolParameterDescriptor(
+                    name = "query",
+                    description = "Food or meal name to look for, e.g. \"bibimbap\". Case-insensitive, partial matches count.",
+                    type = ToolParameterType.String,
+                ),
+            ),
+            optionalParameters = listOf(
+                ToolParameterDescriptor(
+                    name = "days",
+                    description = "How many days back to search (default 365 — a full year)",
+                    type = ToolParameterType.Integer,
+                ),
+                ToolParameterDescriptor(
+                    name = "limit",
+                    description = "Maximum entries to return (default 50, capped at 100)",
+                    type = ToolParameterType.Integer,
+                ),
+            ),
+        ),
+        ToolDescriptor(
+            name = "getBodyMeasurements",
+            description = "Returns the user's body-measurement history (waist, chest, hips, neck, shoulders, biceps, thighs) over the last N days: the latest value in cm, the earliest value in the window, and the change between them. Use for body-recomposition questions, and whenever scale weight has stalled — circumferences often keep moving when weight does not.",
+            optionalParameters = listOf(
+                ToolParameterDescriptor(
+                    name = "days",
+                    description = "Number of days to look back (default 180)",
+                    type = ToolParameterType.Integer,
+                ),
+            ),
+        ),
+        ToolDescriptor(
+            name = "getPastPhases",
+            description = "Returns the user's COMPLETED diet/training phases newest-first: phase, goal direction, pace, start and end date, duration in weeks, start/end weight and body fat, total weight change and kg per week. Use to compare the current phase against the user's own history (e.g. \"is this cut slower than my last one?\") instead of against generic norms. getCurrentPhase returns only the active phase.",
+            optionalParameters = listOf(
+                ToolParameterDescriptor(
+                    name = "limit",
+                    description = "Maximum phases to return (default 5, capped at 20)",
+                    type = ToolParameterType.Integer,
+                ),
+            ),
+        ),
+        ToolDescriptor(
             name = "searchKnowledgeBase",
             description = "Searches the Fitzenia knowledge base for nutrition, training, and app information. Returns ranked chunks with source citations.",
             requiredParameters = listOf(

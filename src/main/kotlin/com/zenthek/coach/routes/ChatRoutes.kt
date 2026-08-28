@@ -637,6 +637,7 @@ private suspend fun processMessage(
                         kbContext             = kbContext,
                         userContext           = userContext,
                         summaryContext        = summaryContext,
+                        isFirstTurn           = isFirstTurn,
                         toolRunner            = toolRunner,
                         allowEscalationMarker = mode != CoachMode.FAST,
                     ).collect { coachFrame ->
@@ -725,6 +726,7 @@ private suspend fun processMessage(
                                 kbContext      = kbContext,
                                 userContext    = userContext,
                                 summaryContext = summaryContext,
+                                isFirstTurn    = isFirstTurn,
                                 toolRunner     = toolRunner,
                             ).collect { coachFrame ->
                                 when (coachFrame) {
@@ -807,6 +809,7 @@ private suspend fun processMessage(
                                     kbContext      = kbContext,
                                     userContext    = userContext,
                                     summaryContext = summaryContext,
+                                    isFirstTurn    = isFirstTurn,
                                 ).collect { coachFrame ->
                                     when (coachFrame) {
                                         is CoachFrame.LLMFrame -> when (val frame = coachFrame.frame) {

@@ -146,6 +146,7 @@ class CoachAgentFactory(apiKey: String) {
         summaryContext: String? = null,
         toolRunner: CoachToolRunner? = null,
         allowEscalationMarker: Boolean = true,
+        isFirstTurn: Boolean = false,
     ): Flow<CoachFrame> = flow {
         // The Pro model is the escalation target, so it never carries the self-signal instruction.
         // Callers that will never run the Pro retry (mode=fast) also disable it — the prompt tells
@@ -153,6 +154,7 @@ class CoachAgentFactory(apiKey: String) {
         val systemPrompt = SystemPromptV1.build(
             locale, strictMode, userContext, summaryContext,
             allowEscalationMarker = allowEscalationMarker && !escalate,
+            isFirstTurn = isFirstTurn,
         )
         val activeModel = if (escalate) escalationModel else primaryModel
         val maxOutputTokens = if (escalate) PRO_MAX_OUTPUT_TOKENS else LITE_MAX_OUTPUT_TOKENS
