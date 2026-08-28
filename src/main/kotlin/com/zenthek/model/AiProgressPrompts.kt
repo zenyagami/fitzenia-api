@@ -59,27 +59,46 @@ CONSTRAINTS:
     /* --------------------------------------------------------------------------------- v2 */
 
     /**
-     * v2 fixes three failure modes observed in production v1 ladders:
+     * v2 replaces v1. It took two passes, and the discarded one is recorded here because
+     * together they bracket the useful calibration from both sides:
      *
-     *  1. **Numeric targets don't steer the image model.** A rung nominally 2.3 pp leaner than
-     *     the source rendered a full 4-pack — every rung collapsed onto the same "lean fit
-     *     person" attractor, so the ordering between rungs was generation noise rather than
-     *     signal. v2 states the stage fraction explicitly, names the attractor and forbids it,
-     *     and gives each stage a hard ceiling on how much change may be visible.
-     *  2. **The prose contradicted the numbers.** Target weights are solved lean-mass-neutral
-     *     (pure fat loss), while v1 asked for added "muscle fullness" and an "optimistic"
-     *     result. The model added muscle on top. v2 states lean mass as a fixed quantity and
-     *     prohibits adding size outright.
-     *  3. **The muscle instruction was not scaled by step.** Rung 1 received the identical
-     *     full-strength boost as the final rung, which both over-inflated the first rung and
-     *     flattened the gradient. v2 scales every magnitude cue by [PromptInputs.stepIndex].
+     *  - **v1 (shipped)** applied one full-strength "add muscle / be optimistic" instruction to
+     *    every rung regardless of position. The first rung therefore rendered nearly the end
+     *    state (a visible four-pack from a soft midsection on a nominal 2.3 pp change), all
+     *    rungs landed on the same "lean fit person" attractor, and the ordering between them
+     *    was generation noise — rung 1 could read leaner than rung 2.
+     *  - **A first attempt at v2 (discarded before release)** fixed the ordering by capping how
+     *    much change each rung could show, but capped the *whole ladder*: it damped the final
+     *    rung too ("must remain an ordinary, healthy, believable physique", "if you are unsure,
+     *    change LESS"). Correctly ordered and unmotivating — the goal frame stopped looking
+     *    like a goal.
      *
-     * v2 also hardens scene preservation: production outputs re-generated the background
-     * (furniture, plants, wall objects all drifted between rungs) and re-framed the shot, which
-     * changes apparent body size and is an independent confound on any rung-to-rung comparison.
+     * CACHE WARNING: that discarded attempt also carried `promptVersion = 2` and was run
+     * against prod once during calibration. Any `ai_progress_ladder` row with
+     * `prompt_version = 2` created before this version shipped will cache-hit on the same
+     * photo + targets and serve the old, damped images. Delete such rows via
+     * `DELETE /api/progress/ladders/{id}` so the storage blobs go with them.
      *
-     * Note the scene-preservation clauses are prompt-side only. The Gemini path additionally
-     * sends no `imageConfig`, so aspect ratio and resolution are still model-chosen.
+     * This version keeps that gradient mechanism and drops the global damping:
+     *
+     *  1. Every frame is given the **same description of the ladder's end state**, then told
+     *     where it sits between the input photo and that end state. Early frames are bounded
+     *     by an explicit reference rather than by generic restraint, which is what makes the
+     *     ordering hold without flattening the sequence.
+     *  2. The **final frame is explicitly the payoff** and is told not to hedge.
+     *  3. Muscle is allowed back, but as a **gradient** rather than v1's constant: negligible
+     *     at the first rung, modest and real at the last. This is the "slightly too positive
+     *     muscle" complaint addressed by scaling rather than by prohibition.
+     *
+     * Scene-preservation constraints are new in v2. They are prompt-side only — the Gemini
+     * path still sends no `imageConfig`, so aspect ratio and framing stay model-chosen and
+     * background drift is not fixed here.
+     *
+     * **Tuning:** [stageGoal] and [muscleAllowance] below are the two calibration dials. Make
+     * the ladder more aspirational by strengthening the final-frame wording in both; make it
+     * more conservative by strengthening the "short of the goal state" wording in the
+     * non-final branches. Any edit needs a new version entry + a `promptVersion` bump in
+     * `loadAiProgressProjectionConfig()`, since `promptVersion` is part of the cache key.
      */
     private fun buildV2(i: PromptInputs): String {
         val steps = i.numRungs.coerceAtLeast(1)
@@ -87,9 +106,6 @@ CONSTRAINTS:
         val isFinal = step >= steps
         val progressPercent = (100.0 * step / steps).toInt()
 
-        // Stated per-frame rather than once for the sequence: the linear BF/weight
-        // interpolation does not hold lean mass exactly constant between the endpoints, and
-        // quoting a single figure would contradict the weight/BF pair given just above it.
         val sourceLeanMassKg = i.currentWeightKg * (1.0 - i.currentBodyFatPercent / 100.0)
         val targetLeanMassKg = i.targetWeightKg * (1.0 - i.targetBodyFatPercent / 100.0)
         val fatNowKg = i.currentWeightKg * (i.currentBodyFatPercent / 100.0)
@@ -97,37 +113,55 @@ CONSTRAINTS:
         val fatLostKg = (fatNowKg - fatThenKg).coerceAtLeast(0.0)
         val bfDelta = i.currentBodyFatPercent - i.targetBodyFatPercent
 
-        // Magnitude ceiling, scaled by stage. The early stages carry an explicit prohibition
-        // because that is where v1 overshot hardest.
-        val restraint = when {
-            steps == 1 -> """
-Show the full change. It must still read as the same person after a realistic period of
-dieting — not as a different, fitter person.
+        // Calibration dial 1 — how much of the transformation this frame may show.
+        val stageGoal = when {
+            isFinal -> """
+This is the FINAL frame: the goal state itself, and the image the person is working toward.
+Show the FULL transformation and make it genuinely impressive — the lean, athletic,
+well-conditioned physique described above, rendered convincingly.
+Do not hedge, soften or hold this frame back. The only limit is that it must unmistakably
+remain the same person: same face, same bone structure, same height, same natural proportions.
 """.trimIndent()
 
             step == 1 -> """
-This is the FIRST and most subtle frame. Someone comparing this image side by side with the
-input must see a MODEST difference: slightly less softness at the waist and lower abdomen,
-a marginally narrower waistline. Nothing more.
-Do NOT reveal defined abdominal muscles at this stage. If individual abdominal segments,
-oblique separation, or a visible "six-pack"/"four-pack" are not already present in the input
-photo, they must NOT appear here. At most, the flattest part of the abdomen may look very
-slightly firmer.
-If you are unsure how much to change, change LESS.
-""".trimIndent()
-
-            !isFinal -> """
-This is an INTERMEDIATE frame. The change from the input photo should be clearly noticeable
-but still moderate, and it must sit visibly BETWEEN the previous stage and the final stage.
-Muscle definition may begin to show through the thinning fat layer, but must remain well short
-of the sharp, fully-defined look of the final stage.
-If you are unsure how much to change, change LESS.
+This is the FIRST frame, $progressPercent% of the way toward that goal state.
+The change must be clearly visible and encouraging — a noticeably slimmer waist, a flatter
+abdomen, a slightly more sculpted face and jawline. It should read as real, motivating
+progress, not as an unchanged photo.
+But it is the first step, not the destination: keep it clearly SHORT of the goal state. The
+shape of the underlying muscle may begin to show through, but abdominal definition must not
+yet be sharp or fully separated.
+If you are unsure, make this frame clearly distinct from BOTH the input photo and the goal
+state — it must sit visibly between them.
 """.trimIndent()
 
             else -> """
-This is the FINAL frame — the full change is shown. Even here the result must remain an
-ordinary, healthy, believable physique for this specific person, not a stage-lean or
-competition-conditioned one.
+This is an INTERMEDIATE frame, $progressPercent% of the way toward that goal state.
+Show clear, substantial, obviously visible progress — meaningfully leaner and more defined
+than the input photo — while staying visibly SHORT of the goal state. Abdominal definition
+should be emerging and partly visible here, not yet complete.
+If you are unsure, make this frame clearly distinct from BOTH the input photo and the goal
+state — it must sit visibly between them.
+""".trimIndent()
+        }
+
+        // Calibration dial 2 — how much muscle may be added at this stage. v1 applied the
+        // final-stage allowance to every rung; that was the "too positive muscle" complaint.
+        val muscleAllowance = when {
+            isFinal -> """
+At this final stage a modest but genuine increase in muscle fullness and hardness is
+appropriate — the look of someone who kept training hard three to four times a week
+throughout the fat loss.
+""".trimIndent()
+
+            step == 1 -> """
+At this early stage muscle size is essentially unchanged. The improvement comes almost
+entirely from carrying less fat.
+""".trimIndent()
+
+            else -> """
+At this stage a slight increase in muscle fullness is appropriate — clearly less than at the
+final frame.
 """.trimIndent()
         }
 
@@ -156,37 +190,40 @@ differs between frames is the person's body composition.
 7. Photographic realism only. No stylisation, no text, no watermarks, no logos. Do not change
    the person's apparent age.
 
-════════ THE ONLY PERMITTED CHANGE ════════
+════════ THE GOAL STATE — where this sequence ends ════════
+The sequence ends at approximately ${"%.1f".format(i.finalBodyFatPercent)}% body fat at ${"%.1f".format(i.finalWeightKg)} kg: a lean, athletic,
+well-conditioned version of this same person — visible abdominal definition, a distinctly
+narrower waist, a defined V-taper, and sculpted shoulders and arms.
+Every frame in the sequence is measured against that end point.
+
+════════ THIS FRAME ════════
 In the input photo the person is at approximately ${"%.1f".format(i.currentBodyFatPercent)}% body fat at ${"%.1f".format(i.currentWeightKg)} kg.
-Render them at approximately ${"%.1f".format(i.targetBodyFatPercent)}% body fat at ${"%.1f".format(i.targetWeightKg)} kg.
+Render them at approximately ${"%.1f".format(i.targetBodyFatPercent)}% body fat at ${"%.1f".format(i.targetWeightKg)} kg — a reduction of
+${"%.1f".format(bfDelta)} percentage points, about ${"%.1f".format(fatLostKg)} kg of fat lost.
 
-That is a reduction of ${"%.1f".format(bfDelta)} percentage points of body fat — about ${"%.1f".format(fatLostKg)} kg of fat
-lost, and nothing else. Represent it as a THINNER LAYER OF SUBCUTANEOUS FAT over the abdomen,
-flanks, lower back, chest and face. The waistline narrows accordingly, and the shape of the
-muscle that is already underneath shows through a little more clearly than before.
+Represent that primarily as a THINNER LAYER OF SUBCUTANEOUS FAT over the abdomen, flanks,
+lower back, chest and face. The waistline narrows accordingly and the shape of the muscle
+underneath shows through more clearly than before.
 
-════════ STAGE BUDGET — this frame is $progressPercent% of the way to the end state ════════
-The complete sequence ends at ${"%.1f".format(i.finalBodyFatPercent)}% body fat at ${"%.1f".format(i.finalWeightKg)} kg.
-Show only the portion of that change which belongs to this frame.
+$stageGoal
 
-$restraint
+════════ MUSCLE ════════
+The weight targets are close to lean-mass-neutral — about ${"%.1f".format(targetLeanMassKg)} kg of lean mass in this
+frame against ${"%.1f".format(sourceLeanMassKg)} kg in the input photo — so most of the visible change must come from
+revealing muscle that is already there, not from adding new mass.
 
-════════ MUSCLE — DO NOT ADD ANY ════════
-Lean body mass does NOT increase anywhere in this sequence: approximately ${"%.1f".format(targetLeanMassKg)} kg in
-this frame, against ${"%.1f".format(sourceLeanMassKg)} kg in the input photo. This is fat loss, not muscle gain.
-- Do NOT increase muscle size, width, thickness or mass anywhere.
-- Shoulder width, arm circumference, chest size and leg size stay exactly as they are in the
-  input photo.
-- Do NOT broaden the frame or exaggerate the V-taper.
-- Any increase in visible definition must come ONLY from the thinner fat layer revealing muscle
-  that is already present in the input photo.
+$muscleAllowance
+
+Regardless of stage:
+- Do NOT broaden the skeletal frame or widen the shoulders beyond a natural amount.
+- Do NOT render bodybuilder or competition-stage mass.
+- Keep this person's own limb proportions and natural muscle shape.
 
 ════════ CALIBRATION ════════
-Do NOT render a fitness model, an influencer physique, or a bodybuilder. Do not drift toward a
-generic "fit person" — the result must remain recognisably THIS person's body, with this
-person's proportions, bone structure and muscle shape, simply carrying less fat.
-The output should be believable as an ordinary photograph this person could take of themselves
-after losing ${"%.1f".format(fatLostKg)} kg of fat.
+The result must remain unmistakably THIS person — same face, bone structure, height, limb
+proportions and natural muscle shape. Do not substitute a generic fitness-model body.
+Within that constraint the projection is meant to be motivating: render the best realistic
+version of this person at ${"%.1f".format(i.targetBodyFatPercent)}% body fat, not a cautious or understated one.
 """.trimIndent()
     }
 }
