@@ -138,6 +138,7 @@ dependencies {
     implementation(libs.dotenv.kotlin)
     implementation(libs.koog.agents)
     implementation(libs.koog.google)
+    implementation(libs.anthropic.java)
 
     // Ktor Client for Http request
     implementation(libs.bundles.ktor.client)

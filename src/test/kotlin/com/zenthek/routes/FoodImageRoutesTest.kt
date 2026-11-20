@@ -21,6 +21,7 @@ import com.zenthek.model.CanonicalFoodEntity
 import com.zenthek.model.CanonicalQueryMapRow
 import com.zenthek.model.ImageAnalysisItem
 import com.zenthek.model.ImageAnalysisResponse
+import com.zenthek.model.ImageAnalysisOutcome
 import com.zenthek.model.ImageAnalyzer
 import com.zenthek.model.InsertCanonicalFoodsPayload
 import com.zenthek.model.InsertCanonicalFoodsResult
@@ -126,7 +127,7 @@ class FoodImageRoutesTest {
                                 configureFoodRoutes(
                                     foodService = dummyFoodService(),
                                     smartSearch = dummySmartSearch(),
-                                    imageAnalyzer = ImageAnalyzer { _, _, _, _, _ -> analyzerResponse },
+                                    imageAnalyzer = ImageAnalyzer { _, _, _, _, _ -> ImageAnalysisOutcome(analyzerResponse, "test", "test-model") },
                                 )
                             }
                         }

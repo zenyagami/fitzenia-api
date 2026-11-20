@@ -28,6 +28,10 @@ import com.zenthek.upstream.imageedit.ProgressImageEditClient
 import com.zenthek.upstream.openai.OpenAiApiService
 import com.zenthek.upstream.openai.OpenAiImageEditClient
 import com.zenthek.upstream.gemini.GeminiApiService
+import com.zenthek.upstream.anthropic.ClaudeImageAnalyzer
+import com.zenthek.service.FallbackImageAnalyzer
+import com.anthropic.client.okhttp.AnthropicOkHttpClient
+import java.time.Duration
 import com.zenthek.upstream.gemini.GeminiImageEditClient
 import com.zenthek.upstream.gemini.GeminiProgressGatekeeperClient
 import com.zenthek.upstream.openfoodfacts.OpenFoodFactsClient
@@ -77,12 +81,33 @@ fun Application.module() {
 
     val offClient = OpenFoodFactsClient(httpClient)
     val usdaClient = UsdaClient(httpClient, config.apiKeys.usdaApiKey)
-    val imageAnalyzer: ImageAnalyzer = if (config.useGeminiForAiImage) {
-        log.info("Image analysis backend: Gemini Flash")
+    val legacyImageAnalyzer: ImageAnalyzer = if (config.useGeminiForAiImage) {
         GeminiApiService(httpClient, config.geminiApiKey)
     } else {
-        log.info("Image analysis backend: GPT-5-mini")
         OpenAiApiService(httpClient, config.apiKeys.openAiApiKey)
+    }
+    val legacyImageLabel = if (config.useGeminiForAiImage) "Gemini Flash" else "GPT-5-mini"
+    val imageAnalyzer: ImageAnalyzer = if (config.aiImage.claudeEnabled) {
+        // maxRetries(0): the fallback wrapper owns retry-by-switching-provider.
+        // SDK timeout sits above FallbackImageAnalyzer's 20s coroutine timeout so the
+        // coroutine timeout always fires first (clean cancel + cooldown).
+        val anthropicClient = AnthropicOkHttpClient.builder()
+            .apiKey(config.aiImage.anthropicApiKey!!)
+            .maxRetries(0)
+            .timeout(Duration.ofSeconds(25))
+            .build()
+        monitor.subscribe(ApplicationStopping) { anthropicClient.close() }
+        log.info("Image analysis backend: Claude ({}) → fallback {}", config.aiImage.claudeModel, legacyImageLabel)
+        FallbackImageAnalyzer(
+            primary = ClaudeImageAnalyzer(anthropicClient, config.aiImage.claudeModel),
+            secondary = legacyImageAnalyzer,
+        )
+    } else {
+        if (config.aiImage.claudeRequested) {
+            log.warn("AI_IMAGE_PRIMARY=claude but ANTHROPIC_API_KEY is missing — running {} only", legacyImageLabel)
+        }
+        log.info("Image analysis backend: {}", legacyImageLabel)
+        legacyImageAnalyzer
     }
 
     // Local OFF mirror — read-side gateway only. Constructed only when

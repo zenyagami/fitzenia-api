@@ -13,6 +13,7 @@ import com.zenthek.revenuecat.WebhookAck
 import com.zenthek.service.AccountService
 import com.zenthek.service.AiProgressProjectionService
 import com.zenthek.service.DeleteLadderResult
+import com.zenthek.service.FallbackImageAnalyzer
 import com.zenthek.service.FoodService
 import com.zenthek.service.ImageAnalysisNutritionGuard
 import com.zenthek.service.LadderEventEmitter
@@ -32,6 +33,13 @@ import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import io.ktor.utils.io.*
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import org.slf4j.LoggerFactory
@@ -81,6 +89,13 @@ private val CREDITS_RESPONSE = CreditsResponse(
 
 private suspend fun ByteWriteChannel.sendSseEvent(event: String, data: String) {
     writeFully("event: $event\ndata: $data\n\n".toByteArray(Charsets.UTF_8))
+    flush()
+}
+
+private const val IMAGE_SSE_PING_INTERVAL_MS = 5_000L
+
+private suspend fun ByteWriteChannel.sendSsePing() {
+    writeFully(": ping\n\n".toByteArray(Charsets.UTF_8))
     flush()
 }
 
@@ -279,7 +294,7 @@ fun Route.configureFoodRoutes(
             val body = call.receive<AnalyzeImageRequest>()
             val imageBytes = java.util.Base64.getDecoder().decode(body.image)
             log.debug("[FOOD] analyze-image userId={} locale={}", authenticatedUser.userId, body.locale)
-            val result = imageAnalyzer.analyzeImage(
+            val outcome = imageAnalyzer.analyzeImage(
                 imageBytes,
                 body.mealTitle,
                 body.additionalContext,
@@ -287,14 +302,14 @@ fun Route.configureFoodRoutes(
                 "image/jpeg"
             )
             val guarded = guardImageAnalysisResult(
-                result = result,
+                result = outcome.response,
                 userId = authenticatedUser.userId,
                 endpoint = "analyze-image",
                 imageBytes = imageBytes,
                 locale = body.locale,
                 mealTitlePresent = !body.mealTitle.isNullOrBlank(),
-                analyzerLabel = imageAnalyzer.label(),
-                modelLabel = imageAnalyzer.modelLabel(),
+                analyzerLabel = outcome.provider,
+                modelLabel = outcome.model,
             )
             call.respond(HttpStatusCode.OK, guarded)
         }
@@ -306,29 +321,53 @@ fun Route.configureFoodRoutes(
             log.debug("[FOOD] analyze-image-stream userId={} locale={}", authenticatedUser.userId, body.locale)
             call.response.cacheControl(CacheControl.NoCache(null))
             call.respondBytesWriter(contentType = ContentType.Text.EventStream) {
-                sendSseEvent("status", """{"phase":"analyzing"}""")
-                try {
-                    val result = imageAnalyzer.analyzeImage(
-                        imageBytes,
-                        body.mealTitle,
-                        body.additionalContext,
-                        body.locale,
-                        "image/jpeg"
-                    )
-                    val guarded = guardImageAnalysisResult(
-                        result = result,
-                        userId = authenticatedUser.userId,
-                        endpoint = "analyze-image-stream",
-                        imageBytes = imageBytes,
-                        locale = body.locale,
-                        mealTitlePresent = !body.mealTitle.isNullOrBlank(),
-                        analyzerLabel = imageAnalyzer.label(),
-                        modelLabel = imageAnalyzer.modelLabel(),
-                    )
-                    sendSseEvent("result", sseJson.encodeToString(ImageAnalysisResponse.serializer(), guarded))
-                } catch (e: Exception) {
-                    application.log.error("SSE analyze-image-stream failed", e)
-                    sendSseEvent("error", """{"message":"Analysis failed"}""")
+                // Claude-first analysis can take 20s+ (Claude, then the Gemini fallback). Netty closes a
+                // response that stays silent past its write timeout, so keep the stream alive
+                // with SSE comment pings (`: ping`, ignored by spec-compliant parsers) until the
+                // result is written. Mutex keeps ping bytes from interleaving with an event.
+                val writeMutex = Mutex()
+                suspend fun sendGuarded(event: String, data: String) =
+                    writeMutex.withLock { sendSseEvent(event, data) }
+
+                sendGuarded("status", """{"phase":"analyzing"}""")
+                coroutineScope {
+                    // Only on the Claude→Gemini path; Gemini-only keeps today's exact byte stream.
+                    val pingJob = launch {
+                        if (imageAnalyzer !is FallbackImageAnalyzer) return@launch
+                        while (isActive) {
+                            delay(IMAGE_SSE_PING_INTERVAL_MS)
+                            runCatching { writeMutex.withLock { sendSsePing() } }
+                        }
+                    }
+                    try {
+                        val outcome = imageAnalyzer.analyzeImage(
+                            imageBytes,
+                            body.mealTitle,
+                            body.additionalContext,
+                            body.locale,
+                            "image/jpeg"
+                        )
+                        val guarded = guardImageAnalysisResult(
+                            result = outcome.response,
+                            userId = authenticatedUser.userId,
+                            endpoint = "analyze-image-stream",
+                            imageBytes = imageBytes,
+                            locale = body.locale,
+                            mealTitlePresent = !body.mealTitle.isNullOrBlank(),
+                            analyzerLabel = outcome.provider,
+                            modelLabel = outcome.model,
+                        )
+                        pingJob.cancel()
+                        sendGuarded("result", sseJson.encodeToString(ImageAnalysisResponse.serializer(), guarded))
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        pingJob.cancel()
+                        application.log.error("SSE analyze-image-stream failed", e)
+                        sendGuarded("error", """{"message":"Analysis failed"}""")
+                    } finally {
+                        pingJob.cancel()
+                    }
                 }
             }
         }
@@ -390,16 +429,6 @@ private fun guardImageAnalysisResult(
     }
     return outcome.response
 }
-
-private fun ImageAnalyzer.label(): String =
-    javaClass.simpleName.ifBlank { javaClass.name }
-
-private fun ImageAnalyzer.modelLabel(): String =
-    when (label()) {
-        "GeminiApiService" -> "gemini-3.1-flash-lite"
-        "OpenAiApiService" -> "gpt-5-mini"
-        else -> "unknown"
-    }
 
 fun Route.configureUserRoutes(userProfileService: UserProfileService) {
     post("/register") {

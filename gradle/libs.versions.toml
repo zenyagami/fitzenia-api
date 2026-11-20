@@ -10,6 +10,7 @@ google-api-client = "2.7.0"
 jackson = "2.18.2"
 dotenv-kotlin = "6.4.1"
 koog = "1.0.0"
+anthropic-java = "3.12.0"
 
 [libraries]
 ktor-server-auth = { module = "io.ktor:ktor-server-auth", version.ref = "ktor" }
@@ -29,6 +30,7 @@ kotlinx-datetime = { module = "org.jetbrains.kotlinx:kotlinx-datetime", version.
 jackson-module-kotlin = { module = "com.fasterxml.jackson.module:jackson-module-kotlin", version.ref = "jackson" }
 dotenv-kotlin = { module = "io.github.cdimascio:dotenv-kotlin", version.ref = "dotenv-kotlin" }
 koog-agents = { module = "ai.koog:koog-agents", version.ref = "koog" }
+anthropic-java = { module = "com.anthropic:anthropic-java", version.ref = "anthropic-java" }
 koog-google = { module = "ai.koog:prompt-executor-google-client", version = "1.0.0-beta" }
 ktor-server-netty = { module = "io.ktor:ktor-server-netty", version.ref = "ktor" }
 logback-classic = { module = "ch.qos.logback:logback-classic", version.ref = "logback" }

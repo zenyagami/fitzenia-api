@@ -2,7 +2,7 @@
 
 Ktor-based Kotlin/JVM service for the Fitzenio mobile app:
 - **Food search & barcode lookup** — fans out to Open Food Facts + USDA, layers a shared canonical catalog (Supabase) plus Gemini-backed AI ranking/generation on top (Smart Food Search). In production, an additional local **OFF mirror** is consulted first (see "OFF mirror" below).
-- **AI image analysis** — meal photo → structured nutrition payload, Gemini (primary) or OpenAI (fallback).
+- **AI image analysis** — meal photo → structured nutrition payload. Claude first (when `AI_IMAGE_PRIMARY=claude`) with transparent Gemini fallback; otherwise Gemini (or OpenAI when `USE_GEMINI=false`).
 - **User onboarding** — registers `user_profile` / `user_goal` / `calorie_target` rows in Supabase (RLS-scoped via the caller's JWT).
 - **Account deletion** — three-stage hard wipe (Storage → Postgres → Auth), service-role only.
 
@@ -24,7 +24,7 @@ The same Gradle module also produces two separate **Cloud Run Job** images:
 | Rate limit | `ktor-server-rate-limit` | Per-user buckets keyed off `AuthenticatedUserContext.userId` |
 | Database | Supabase | User-scoped REST via `SupabaseClient`; service-role admin via `SupabaseAdminGateway` + `CanonicalCatalogClient` |
 | AI search | Gemini 2.5 Flash Lite (rank) + Gemini 2.5 Flash (generate) | Models pinned via env, see `AI_SEARCH_*_MODEL` |
-| AI image | Gemini 3.1 Flash Lite Preview (primary) / GPT-5-mini (fallback) | Selected by `USE_GEMINI` |
+| AI image | Claude (`CLAUDE_IMAGE_MODEL`, default `claude-opus-5-5`) → Gemini 3.1 Flash Lite fallback; GPT-5-mini legacy | `AI_IMAGE_PRIMARY` + `USE_GEMINI`; official `anthropic-java` SDK |
 | Serialization | kotlinx.serialization 1.7.3 | JSON only; single shared `Json` |
 | Logging | Logback 1.5.13 | Console only; `com.zenthek` at DEBUG |
 | Env loading | dotenv-kotlin 6.4.1 | Always loaded with `ignoreIfMissing = true` |
@@ -48,6 +48,7 @@ src/main/kotlin/
     │   ├── UserProfileService.kt            # /api/user/register + /registration-status
     │   ├── AccountService.kt                # /api/account DELETE — three-stage wipe orchestrator
     │   ├── AiProgressProjectionService.kt   # /api/progress/ladders/* — ladder generator + delete
+    │   ├── FallbackImageAnalyzer.kt         # Claude → Gemini fallback wrapper + per-instance cooldown
     │   ├── QueryNormalizer.kt               # locale-aware query canonicalization
     │   ├── NutritionValidator.kt            # sanity-checks AI nutrition payloads
     │   ├── UnauthorizedException.kt         # → HTTP 401
@@ -73,8 +74,10 @@ src/main/kotlin/
     │   │   ├── CanonicalCatalogGateway.kt   # service-role canonical catalog reads + insert_canonical_foods RPC
     │   │   ├── SupabaseAdminGateway.kt      # service-role storage/postgres/auth admin (uploadObject, removeStorageObjects, etc.)
     │   │   └── AiProgressLadderGateway.kt   # service-role reads/writes for ai_progress_ladder + rung tables (cache lookup, INSERT-on-conflict, ownership-checked delete)
+    │   ├── anthropic/
+    │   │   └── ClaudeImageAnalyzer.kt        # image analysis on Claude (strict JSON schema, 1h-cached system prompt)
     │   ├── gemini/
-    │   │   ├── GeminiApiService.kt           # image analysis primary backend (context cache, Mutex-protected)
+    │   │   ├── GeminiApiService.kt           # image analysis Gemini backend / Claude fallback (context cache, Mutex-protected)
     │   │   └── GeminiProgressGatekeeperClient.kt  # gatekeeper for AI progress projections (gate verdict + body-fat estimate in one call)
     │   └── openai/
     │       ├── OpenAiApiService.kt           # image analysis fallback (Responses API)
@@ -196,12 +199,24 @@ Adding a route to an existing bucket: drop it into the matching `rateLimit(...) 
 
 | Backend | Class | Model | Timeout | Notes |
 |---|---|---|---|---|
-| Gemini (primary) | `GeminiApiService` | `gemini-3.1-flash-lite` | 90s | Context cache (1h TTL, Mutex-protected, refreshed 1 min before expiry); `thinkingBudget = MEDIUM (8192)`; `responseJsonSchema` enforced |
-| OpenAI (fallback) | `OpenAiApiService` | `gpt-5-mini` via Responses API | 120s | `reasoning.effort = "low"`; `store = false` |
+| Claude (primary when enabled) | `ClaudeImageAnalyzer` | `CLAUDE_IMAGE_MODEL` (default `claude-opus-5-5`) | 20s (coroutine) / 25s (SDK) | Official `anthropic-java` SDK, `maxRetries(0)`; effort `MEDIUM`; strict schema `claudeStrictImageAnalysisResponseSchema()`; system prompt cached 1h; any `stopReason != END_TURN` = failure |
+| Gemini | `GeminiApiService` | `gemini-3.1-flash-lite` | 90s | Context cache (1h TTL, Mutex-protected, refreshed 1 min before expiry); `thinkingBudget = MEDIUM (8192)`; `responseJsonSchema` enforced |
+| OpenAI (legacy) | `OpenAiApiService` | `gpt-5-mini` via Responses API | 120s | `reasoning.effort = "low"`; `store = false`. Unverified: sends `strict: true` with a schema lacking `additionalProperties: false` |
 
-Selection: `config.useGeminiForAiImage` (env `USE_GEMINI`, default `true`).
+Selection (`Application.module()`): `AI_IMAGE_PRIMARY=claude` **and** `ANTHROPIC_API_KEY` set → `FallbackImageAnalyzer(primary = Claude, secondary = legacy)`. Otherwise the legacy backend alone (Gemini, or OpenAI when `USE_GEMINI=false`). `claude` without a key logs a startup warning and runs legacy-only.
 
-System prompt + response JSON schema live in `model/ImageAnalyzer.kt` (`ImageAnalyzerFactory.IMAGE_ANALYZE_SYSTEM_PROMPT`, `imageAnalysisResponseSchema()`, `buildImageAnalyzeUserPrompt()`).
+**`FallbackImageAnalyzer` contract:**
+- **Any** primary failure → same request on the secondary: timeout, API error, unusable output, or a result `ImageAnalysisNutritionGuard` would reject.
+- Non-timeout `CancellationException` (client disconnect) is rethrown, never retried.
+- Total budget is 105s inside Cloud Run's 120s request timeout. Secondary overrun → `UpstreamFailureException` (502).
+- Per-instance cooldown skips Claude:
+  - **30 min** after 401 / 402 (out of credit) / 403 / 404 / spend-limit 429 (`enforced_spend_limit_reached`)
+  - **60 s** after other 429s / 529 / timeouts
+- Logs: `[IMAGE-AI] provider=claude …` (latency + token usage per call) and `[IMAGE-AI] fallback=secondary reason=…`.
+
+Analyzers return `ImageAnalysisOutcome(response, provider, model)`. Provenance feeds the nutrition-guard logs only; clients still receive `ImageAnalysisResponse`. When Claude is enabled, `analyze-image-stream` sends `: ping` SSE comments every 5s while analysis runs (Gemini-only streams are unchanged), and `application.conf` raises `responseWriteTimeoutSeconds` to 120 (Netty default 10s).
+
+System prompt + response JSON schema live in `model/ImageAnalyzer.kt` (`ImageAnalyzerFactory.IMAGE_ANALYZE_SYSTEM_PROMPT`, `imageAnalysisResponseSchema()`, its Claude-strict variant, `buildImageAnalyzeUserPrompt()`).
 
 The `ImageAnalyzer` `fun interface` decouples route handlers from the backend:
 
@@ -213,7 +228,7 @@ fun interface ImageAnalyzer {
         additionalContext: String?,
         locale: String?,
         mimeType: String
-    ): ImageAnalysisResponse
+    ): ImageAnalysisOutcome
 }
 ```
 
@@ -368,7 +383,10 @@ data class AppConfig(
 | `FATSECRET_CLIENT_ID` / `FATSECRET_CLIENT_SECRET` | yes | — | legacy; still validated at startup even though unwired |
 | `USDA_API_KEY` | yes | — | |
 | `OPENAI_API_KEY` | yes | — | image analysis fallback |
-| `GEMINI_API_KEY` | yes | — | image analysis primary + Smart Search AI |
+| `GEMINI_API_KEY` | yes | — | image analysis (Gemini / Claude fallback) + Smart Search AI |
+| `AI_IMAGE_PRIMARY` | no | `gemini` | `claude` → Claude first, Gemini fallback |
+| `ANTHROPIC_API_KEY` | no | — | Secret Manager; required for `AI_IMAGE_PRIMARY=claude` (missing → warning, Gemini-only) |
+| `CLAUDE_IMAGE_MODEL` | no | `claude-opus-5-5` | e.g. `claude-sonnet-5-5`, `claude-haiku-5-5` |
 | **Supabase** | | | |
 | `SUPABASE_URL` | yes | — | also derives issuer + JWKS URL |
 | `SUPABASE_PUBLISHABLE_KEY` | yes¹ | — | preferred modern key |

@@ -1,5 +1,6 @@
 package com.zenthek.upstream.gemini
 
+import com.zenthek.model.ImageAnalysisOutcome
 import com.zenthek.model.ImageAnalysisResponse
 import com.zenthek.model.ImageAnalyzer
 import com.zenthek.model.applyAtwaterFallback
@@ -76,7 +77,7 @@ class GeminiApiService(
         additionalContext: String?,
         locale: String?,
         mimeType: String
-    ): ImageAnalysisResponse {
+    ): ImageAnalysisOutcome {
         log.info(
             "analyzeImage called via Gemini [{}], mimeType={}, mealTitlePresent={}",
             GEMINI_MODEL,
@@ -146,7 +147,11 @@ class GeminiApiService(
         }
 
         return try {
-            json.decodeFromString(ImageAnalysisResponse.serializer(), content).applyAtwaterFallback()
+            ImageAnalysisOutcome(
+                response = json.decodeFromString(ImageAnalysisResponse.serializer(), content).applyAtwaterFallback(),
+                provider = "gemini",
+                model = GEMINI_MODEL,
+            )
         } catch (e: Exception) {
             log.error("Failed to deserialize Gemini content: ${e.message}. Content: $content")
             throw e

@@ -1,14 +1,29 @@
 package com.zenthek.model
 
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonObjectBuilder
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
+
+/**
+ * Result of one image analysis plus which backend actually produced it.
+ * Provenance is server-side only (logs / nutrition-guard telemetry) — the
+ * client still receives just [response].
+ */
+data class ImageAnalysisOutcome(
+    val response: ImageAnalysisResponse,
+    val provider: String,
+    val model: String,
+)
 
 fun interface ImageAnalyzer {
     suspend fun analyzeImage(
@@ -17,7 +32,7 @@ fun interface ImageAnalyzer {
         additionalContext: String?,
         locale: String?,
         mimeType: String
-    ): ImageAnalysisResponse
+    ): ImageAnalysisOutcome
 }
 object ImageAnalyzerFactory {
     private val promptJson = Json { explicitNulls = false }
@@ -377,6 +392,44 @@ RULES
             add("totalFatG")
             add("totalFiberG")
             add("totalSodiumMg")
+        }
+    }
+
+    /**
+     * Claude structured-outputs variant of [imageAnalysisResponseSchema].
+     * Same fields and required lists, rewritten to the subset Claude's strict
+     * decoding documents: every object gets `additionalProperties: false`, and
+     * `type: [X, "null"]` (with an optional enum containing null) becomes
+     * `anyOf: [{type: X[, enum]}, {type: "null"}]`. Gemini keeps the original.
+     */
+    fun claudeStrictImageAnalysisResponseSchema(): JsonObject =
+        toClaudeStrict(imageAnalysisResponseSchema()) as JsonObject
+
+    private fun toClaudeStrict(element: JsonElement): JsonElement {
+        if (element is JsonArray) return JsonArray(element.map(::toClaudeStrict))
+        if (element !is JsonObject) return element
+
+        val type = element["type"]
+        if (type is JsonArray) {
+            val types = type.map { it.jsonPrimitive.content }
+            val nonNull = types.filter { it != "null" }
+            if ("null" in types && nonNull.size == 1) {
+                val enumValues = (element["enum"] as? JsonArray)?.filter { it !is JsonNull }
+                val base = buildJsonObject {
+                    element.forEach { (k, v) -> if (k != "type" && k != "enum") put(k, toClaudeStrict(v)) }
+                    put("type", nonNull.single())
+                    if (enumValues != null) put("enum", JsonArray(enumValues))
+                }
+                return buildJsonObject {
+                    put("anyOf", JsonArray(listOf(base, buildJsonObject { put("type", "null") })))
+                }
+            }
+        }
+
+        val isObject = (type as? JsonPrimitive)?.content == "object"
+        return buildJsonObject {
+            element.forEach { (k, v) -> put(k, toClaudeStrict(v)) }
+            if (isObject) put("additionalProperties", false)
         }
     }
 

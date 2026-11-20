@@ -1,5 +1,6 @@
 package com.zenthek.upstream.openai
 
+import com.zenthek.model.ImageAnalysisOutcome
 import com.zenthek.model.ImageAnalysisResponse
 import com.zenthek.model.ImageAnalyzer
 import com.zenthek.model.applyAtwaterFallback
@@ -43,7 +44,7 @@ class OpenAiApiService(
         additionalContext: String?,
         locale: String?,
         mimeType: String
-    ): ImageAnalysisResponse {
+    ): ImageAnalysisOutcome {
         val (dataUrl, userText) = buildImageRequest(imageBytes, mealTitle, additionalContext, locale, mimeType)
 
         val requestBody = buildJsonObject {
@@ -98,6 +99,10 @@ class OpenAiApiService(
             ?.jsonPrimitive?.content
             ?: error("Unexpected OpenAI response structure: $responseText")
 
-        return json.decodeFromString(ImageAnalysisResponse.serializer(), content).applyAtwaterFallback()
+        return ImageAnalysisOutcome(
+            response = json.decodeFromString(ImageAnalysisResponse.serializer(), content).applyAtwaterFallback(),
+            provider = "openai",
+            model = "gpt-5-mini",
+        )
     }
 }

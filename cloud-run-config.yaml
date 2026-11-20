@@ -22,13 +22,14 @@ spec:
         autoscaling.knative.dev/maxScale: "50"
         
         # Timeout settings
-        run.googleapis.com/timeout: "80s"
+        # 120s: meal scanner = Claude (≤20s) + Gemini fallback inside one request.
+        run.googleapis.com/timeout: "120s"
         run.googleapis.com/healthcheck-path: /health
         # Cloud SQL connection (if needed)
         # run.googleapis.com/cloudsql-instances: PROJECT_ID:REGION:INSTANCE_NAME
     spec:
       containerConcurrency: 20
-      timeoutSeconds: 60
+      timeoutSeconds: 120
       # Use default compute service account for now
       # serviceAccountName: fitzenia-cloudrun@PROJECT_ID.iam.gserviceaccount.com
       containers:
@@ -67,6 +68,17 @@ spec:
             secretKeyRef:
               name: GEMINI_API_KEY
               key: latest
+        # Meal scanner Claude-first (docs/CLAUDE_IMAGE_SCANNER_PLAN.md) — NOT enabled in prod yet.
+        # After dev validation: `./sync-secrets.sh prod` with ANTHROPIC_API_KEY in .env.prod
+        # (creates + grants the secret), then uncomment. Uncommenting before the secret exists
+        # makes `gcloud run services replace` fail.
+        # - name: AI_IMAGE_PRIMARY
+        #   value: "claude"
+        # - name: ANTHROPIC_API_KEY
+        #   valueFrom:
+        #     secretKeyRef:
+        #       name: ANTHROPIC_API_KEY
+        #       key: latest
         - name: SUPABASE_URL
           valueFrom:
             secretKeyRef:

@@ -66,6 +66,15 @@ spec:
             secretKeyRef:
               name: GEMINI_API_KEY
               key: latest
+        # Meal scanner: Claude first, Gemini fallback (see docs/CLAUDE_IMAGE_SCANNER_PLAN.md).
+        # Set AI_IMAGE_PRIMARY to "gemini" to go back to Gemini-only without a code change.
+        - name: AI_IMAGE_PRIMARY
+          value: "claude"
+        - name: ANTHROPIC_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: ANTHROPIC_API_KEY
+              key: latest
         - name: SUPABASE_URL
           valueFrom:
             secretKeyRef:

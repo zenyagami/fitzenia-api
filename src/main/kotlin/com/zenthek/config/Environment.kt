@@ -16,7 +16,27 @@ data class AppConfig(
     val offMirror: OffMirrorConfig,
     val usdaMirror: UsdaMirrorConfig,
     val revenueCat: RevenueCatConfig,
+    val aiImage: AiImageConfig,
 )
+
+/**
+ * Meal-photo analysis backend selection.
+ *
+ * `AI_IMAGE_PRIMARY=claude` + `ANTHROPIC_API_KEY` → Claude first, the legacy
+ * backend (Gemini, or OpenAI when `USE_GEMINI=false`) as transparent fallback.
+ * Anything else → legacy backend only, identical to the pre-Claude behavior.
+ *
+ * Optional at load on purpose (RevenueCat precedent): a missing key logs a
+ * warning at startup and the service runs Gemini-only instead of crashing.
+ * Effort and timeouts are hardcoded in the Claude/fallback classes.
+ */
+data class AiImageConfig(
+    val claudeRequested: Boolean,
+    val anthropicApiKey: String?,
+    val claudeModel: String,
+) {
+    val claudeEnabled: Boolean get() = claudeRequested && anthropicApiKey != null
+}
 
 /**
  * RevenueCat → Supabase entitlement sync. Drives `POST /webhooks/revenuecat`
@@ -270,6 +290,14 @@ private fun loadSupabaseServiceRoleKey(): String {
         ?: error("Missing SUPABASE_SERVICE_ROLE_KEY")
 }
 
+private const val DEFAULT_CLAUDE_IMAGE_MODEL = "claude-opus-5-5"
+
+private fun loadAiImageConfig(): AiImageConfig = AiImageConfig(
+    claudeRequested = env("AI_IMAGE_PRIMARY")?.trim()?.equals("claude", ignoreCase = true) == true,
+    anthropicApiKey = env("ANTHROPIC_API_KEY")?.trim()?.ifBlank { null },
+    claudeModel = env("CLAUDE_IMAGE_MODEL")?.trim()?.ifBlank { null } ?: DEFAULT_CLAUDE_IMAGE_MODEL,
+)
+
 private fun loadRevenueCatConfig(): RevenueCatConfig = RevenueCatConfig(
     webhookAuth = env("REVENUECAT_WEBHOOK_AUTH")?.trim()?.ifBlank { null },
     restApiKey = env("REVENUECAT_REST_API_KEY")?.trim()?.ifBlank { null },
@@ -314,6 +342,7 @@ object ConfigLoader {
             offMirror = offMirror,
             usdaMirror = usdaMirror,
             revenueCat = loadRevenueCatConfig(),
+            aiImage = loadAiImageConfig(),
         )
     }
 
@@ -344,6 +373,7 @@ object ConfigLoader {
             offMirror = offMirror,
             usdaMirror = usdaMirror,
             revenueCat = loadRevenueCatConfig(),
+            aiImage = loadAiImageConfig(),
         )
     }
 }
