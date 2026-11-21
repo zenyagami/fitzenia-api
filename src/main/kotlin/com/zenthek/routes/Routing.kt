@@ -33,6 +33,7 @@ import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import io.ktor.utils.io.*
+import kotlin.math.roundToInt
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -427,6 +428,23 @@ private fun guardImageAnalysisResult(
             outcome.reasons.joinToString("; "),
         )
     }
+    // Final (post-guard) numbers the client receives — lets us audit estimates per provider.
+    // Food names, grams and macros only; no image bytes, user text or identifiers beyond the endpoint.
+    log.info(
+        "[FOOD] image-analysis result endpoint={} provider={} model={} restaurant={} totalKcal={} P/C/F={}/{}/{} items={}",
+        endpoint,
+        analyzerLabel,
+        modelLabel,
+        outcome.response.isLikelyRestaurant,
+        outcome.response.totalCalories,
+        "%.1f".format(outcome.response.totalProteinG),
+        "%.1f".format(outcome.response.totalCarbsG),
+        "%.1f".format(outcome.response.totalFatG),
+        outcome.response.items.joinToString(" | ") {
+            "${it.name} ${it.servingCount}x${it.servingUnit} ${it.weightG.roundToInt()}g " +
+                "${(it.caloriesExact * it.servingCount).roundToInt()}kcal conf=${it.confidence}"
+        },
+    )
     return outcome.response
 }
 

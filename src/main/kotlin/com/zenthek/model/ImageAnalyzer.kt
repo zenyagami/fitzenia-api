@@ -106,7 +106,7 @@ Additional context may be provided in the user message. Apply in this priority o
 4. VISUAL CUES ONLY (fallback when no context provided)
    Calibrate using visible reference objects in this priority:
    - Utensils: fork (~18–20cm long), spoon (tablespoon ≈ 15ml)
-   - Hands: average palm ≈ 150g protein portion
+   - Hands: a palm-sized piece of cooked meat or fish ≈ 100g
    - Containers: standard dinner plate ≈ 26cm diameter; estimate glassware volume visually
    Estimate volume first, then apply density to derive weight.
 
@@ -166,8 +166,10 @@ Determine "isLikelyRestaurant" (true/false):
   user note mentions a restaurant name, or context clearly implies takeout/dining out.
 - false signals: home-style plating, everyday tableware, visible home cooking context.
 
-If "isLikelyRestaurant" is true: increase oil and fat estimates by 15–20% per item to
-account for professional kitchen standards (butter finishing, cooking oils, richer sauces).
+If "isLikelyRestaurant" is true, assume restaurant-style preparation when choosing reference
+values (e.g. a griddled restaurant patty, not a lean home-cooked one). Do not apply a
+percentage uplift: published restaurant/brand values and standard cooked-food averages already
+include cooking fat. Add fat beyond the reference value only for visible extras, and count it once.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 STEP 4 — IDENTIFICATION, HIDDEN INGREDIENTS & ESTIMATION
@@ -182,9 +184,10 @@ STEP 4 — IDENTIFICATION, HIDDEN INGREDIENTS & ESTIMATION
    - For generic items, use USDA/standard averages per unit (per taco, per slice of
      bread, per ml).
 4. Scan for hidden calories — do not only log what is visibly on top:
-   - Surface sheen: if the food looks oily or glossy, consider adding "Cooking Oil" or "Butter"
-     as a separate item. Only do this when the sheen is clearly visible and not a natural
-     food property (e.g., salmon skin naturally shines — do not add oil for that).
+   - Added fat: add "Cooking Oil" or "Butter" as a separate item only when pooled or clearly
+     added fat is visible and it is not already part of an item's reference value (a burger,
+     fried food, or restaurant dish already includes its cooking fat). Natural shine is not
+     added fat (e.g., salmon skin naturally shines — do not add oil for that).
    - Sauces and dressings: identify dips, glazes, and dressings; creamy sauces are high-fat.
    - Estimate sodium (mg) per item where reasonably possible (soy sauce, processed foods,
      restaurant dishes). Use null when sodium is genuinely unknown (plain steamed vegetables).
@@ -202,6 +205,14 @@ STEP 4 — IDENTIFICATION, HIDDEN INGREDIENTS & ESTIMATION
    - "medium" — one factor (type or portion) is uncertain
    - "low" — both are uncertain, item is partially obscured, or sauce/dressing hidden
 8. Do NOT invent items not visible in the image.
+9. Report the most likely value, not a cautious upper bound; when torn between two portion
+   sizes, pick the midpoint.
+10. An assembled dish (burger, sandwich, burrito, wrap, pizza slice) is ONE item whose nutrition
+   already includes its bun or bread, patties, cheese, sauce and cooking fat. List components
+   separately only when they are served separately (fries, a dip cup, a drink).
+11. Before answering, check each item: caloriesExact ≈ 4·proteinG + 4·carbsG + 9·fatG within
+   ~10%, and total kcal ÷ weightG fits the food (burgers ≈ 2.3–3.0 kcal/g, fries ≈ 3,
+   salads < 1.5). Adjust the estimate if either check fails.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 STEP 5 — TITLE & SUBTITLE
